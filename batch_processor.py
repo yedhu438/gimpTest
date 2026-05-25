@@ -798,22 +798,31 @@ def _get_cmyk_transform():
             _cmyk_transform = None
     return _cmyk_transform
 
-def _rgb_to_cmyk(rgb_img):
-    """Convert an RGB PIL image to CMYK.
-    Uses PIL's direct formula (no press ICC profile) — SWOP v2 is for offset
-    printing and over-darkens DTF output. PIL gives brighter, truer colours."""
+def _rgb_to_cmyk(rgba_img):
+    """Max-K GCR conversion for DTF: maximises K so blacks are rich and
+    saturated colours stay vivid. No press ICC profile — SWOP v2 adds dot-gain
+    that over-darkens DTF film output.
+    Returns (cmyk PIL image, alpha PIL band) — alpha stored separately in PSD."""
     import numpy as np
-    rgb = rgb_img.convert("RGB")
-    cmyk = rgb.convert("CMYK")
-    # Snap essentially-pure-black pixels to pure K — prevents brownish CMY tint
-    # that PIL's formula creates for very dark pixels on DTF film.
-    # Threshold 8: only pixels where ALL channels < 8 are affected (true black).
-    # Dark hair, shadows, coloured darks are all safely above this cutoff.
-    rgb_arr  = np.array(rgb, dtype=np.int32)
-    cmyk_arr = np.array(cmyk)
-    dark = rgb_arr.max(axis=2) < 8
-    cmyk_arr[dark] = [0, 0, 0, 255]
-    return Image.fromarray(cmyk_arr, "CMYK")
+    rgba    = np.asarray(rgba_img.convert("RGBA"), dtype=np.float32)
+    r, g, b = rgba[:,:,0]/255.0, rgba[:,:,1]/255.0, rgba[:,:,2]/255.0
+    alpha   = rgba[:,:,3]
+
+    k      = 1.0 - np.maximum.reduce([r, g, b])          # max-K GCR
+    denom  = np.where(k < 1.0, 1.0 - k, 1.0)
+    c      = np.clip((1.0 - r - k) / denom, 0.0, 1.0)
+    m      = np.clip((1.0 - g - k) / denom, 0.0, 1.0)
+    y      = np.clip((1.0 - b - k) / denom, 0.0, 1.0)
+
+    # Collapse CMY floating-point noise on near-pure-black pixels to clean K-only
+    pure_k = k >= (247.0 / 255.0)
+    c[pure_k] = 0.0
+    m[pure_k] = 0.0
+    y[pure_k] = 0.0
+
+    cmyk_arr  = (np.stack([c, m, y, k], axis=2) * 255.0).round().astype(np.uint8)
+    alpha_arr = alpha.round().astype(np.uint8)
+    return Image.fromarray(cmyk_arr, "CMYK"), Image.fromarray(alpha_arr, "L")
 
 def _to_channels_rgb(img):
     """Convert RGBA PIL image → RGB + alpha channel dict for PSD.
@@ -825,6 +834,29 @@ def _to_channels_rgb(img):
          0: r.tobytes(),
          1: g.tobytes(),
          2: b.tobytes(),
+    }
+
+def _to_channels_cmyk(img):
+    """Convert RGBA PIL image → CMYK + alpha channel dict for a CMYK PSD.
+
+    CRITICAL: PSD CMYK stores values inverted (0 = full ink, 255 = no ink),
+    opposite to PIL (255 = full ink).  Without this inversion, K=255 in PIL
+    (pure black) is written as K=255 in the PSD, which Photoshop reads as
+    *zero* black ink — making blacks appear grey and all colours washed out.
+
+    Channel IDs: -1=alpha (not inverted), 0=C, 1=M, 2=Y, 3=K (all inverted).
+    """
+    import numpy as np
+    cmyk_img, alpha = _rgb_to_cmyk(img)
+    c, m, y, k = cmyk_img.split()
+    def inv(band):
+        return (255 - np.asarray(band, dtype=np.uint8)).tobytes()
+    return {
+        -1: np.asarray(alpha, dtype=np.uint8).tobytes(),
+         0: inv(c),
+         1: inv(m),
+         2: inv(y),
+         3: inv(k),
     }
 
 def _packbits_row(data: bytes) -> bytes:
@@ -858,8 +890,9 @@ def _rle_encode_channel(raw: bytes, width: int, height: int):
     return struct.pack(f'>{height}H', *[len(r) for r in rows]), b''.join(rows)
 
 def write_psd(out_path, canvas_w, canvas_h, layers):
-    """Write an RGB layered PSD (8-bit, transparent). RGB preserves customer
-    image colours exactly — DTF RIP handles colour management at print time."""
+    """Write a CMYK layered PSD (8-bit, with transparency channel).
+    CMYK channels are stored inverted per PSD spec (0=full ink, 255=no ink).
+    Alpha channel is stored straight (255=opaque, 0=transparent)."""
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
     buf = io.BytesIO()
@@ -869,11 +902,11 @@ def write_psd(out_path, canvas_w, canvas_h, layers):
     p(b'8BPS')
     p(struct.pack('>H', 1))     # version
     p(b'\x00' * 6)              # reserved
-    p(struct.pack('>H', 4))     # 4 channels: alpha + R G B
+    p(struct.pack('>H', 5))     # 5 channels: alpha + C M Y K
     p(struct.pack('>I', canvas_h))
     p(struct.pack('>I', canvas_w))
     p(struct.pack('>H', 8))     # 8 bits/channel
-    p(struct.pack('>H', 3))     # RGB colour mode
+    p(struct.pack('>H', 4))     # CMYK colour mode
 
     p(struct.pack('>I', 0))     # colour mode data (empty)
 
@@ -886,16 +919,13 @@ def write_psd(out_path, canvas_w, canvas_h, layers):
     res_blocks += (b'8BIM' + struct.pack('>H', 1005) +
                    b'\x00\x00' + struct.pack('>I', len(res_data)) + res_data)
 
-    # ICC profile intentionally omitted — SWOP v2 makes Photoshop render colours
-    # darker than the source, which is wrong for DTF (no dot gain on film).
-
     p(struct.pack('>I', len(res_blocks)))
     p(res_blocks)
 
     # ── Layer & Mask Info ────────────────────────────────────────────────────
     lr_buf   = io.BytesIO()
     ld_buf   = io.BytesIO()
-    ch_order = [-1, 0, 1, 2]   # alpha, R, G, B
+    ch_order = [-1, 0, 1, 2, 3]   # alpha, C, M, Y, K
 
     for lyr in layers:
         img    = lyr['image']
@@ -905,13 +935,13 @@ def write_psd(out_path, canvas_w, canvas_h, layers):
         right  = left + img.width
         flags  = 0 if lyr.get('visible', True) else 2
 
-        ch_raw = _to_channels_rgb(img)
+        ch_raw = _to_channels_cmyk(img)
         ch_rle = {cid: _rle_encode_channel(ch_raw[cid], img.width, img.height)
                   for cid in ch_order}
 
         lr = io.BytesIO()
         lr.write(struct.pack('>iiii', top, left, bottom, right))
-        lr.write(struct.pack('>H', 4))  # 4 channels
+        lr.write(struct.pack('>H', 5))  # 5 channels
         for cid in ch_order:
             rc, cd = ch_rle[cid]
             lr.write(struct.pack('>hI', cid, 2 + len(rc) + len(cd)))
@@ -941,17 +971,15 @@ def write_psd(out_path, canvas_w, canvas_h, layers):
     p(struct.pack('>I', len(lmi)))
     p(lmi)
 
-    # ── Merged composite (RGB) ───────────────────────────────────────────────
+    # ── Merged composite (CMYK + alpha) ─────────────────────────────────────
     composite = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
     for lyr in layers:
         if lyr.get('visible', True):
-            composite.paste(lyr['image'].convert("RGBA"),
-                            (lyr['left'], lyr['top']),
-                            lyr['image'].convert("RGBA"))
-    r, g, b, a = composite.split()
-    alpha = Image.new("L", (canvas_w, canvas_h), 255)
-    comp_rle = [_rle_encode_channel(band.tobytes(), canvas_w, canvas_h)
-                for band in [alpha, r, g, b]]
+            src = lyr['image'].convert("RGBA")
+            composite.paste(src, (lyr['left'], lyr['top']), src)
+    comp_ch  = _to_channels_cmyk(composite)
+    comp_rle = [_rle_encode_channel(comp_ch[cid], canvas_w, canvas_h)
+                for cid in ch_order]
     p(struct.pack('>H', 1))     # RLE encoding
     for rc, _  in comp_rle: p(rc)
     for _,  cd in comp_rle: p(cd)
