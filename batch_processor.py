@@ -889,10 +889,26 @@ def _rle_encode_channel(raw: bytes, width: int, height: int):
     rows = [_packbits_row(raw[r * width:(r + 1) * width]) for r in range(height)]
     return struct.pack(f'>{height}H', *[len(r) for r in rows]), b''.join(rows)
 
+def _get_srgb_icc_bytes():
+    """Return raw sRGB ICC profile bytes to embed in the PSD (resource 1039).
+    Embedding sRGB stops Photoshop applying SWOP dot-gain interpretation,
+    so colours display accurately without any soft-proof mode active."""
+    try:
+        profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
+        return profile.tobytes()
+    except Exception:
+        return None
+
+_SRGB_ICC = _get_srgb_icc_bytes()
+
 def write_psd(out_path, canvas_w, canvas_h, layers):
-    """Write a CMYK layered PSD (8-bit, with transparency channel).
-    CMYK channels are stored inverted per PSD spec (0=full ink, 255=no ink).
-    Alpha channel is stored straight (255=opaque, 0=transparent)."""
+    """Write an RGB layered PSD (8-bit, transparent) with embedded sRGB profile.
+
+    RGB is the correct source format for DTF printing — the RIP converts to
+    CMYK ink internally using profiles calibrated for the specific film and ink.
+    Sending CMYK to a DTF RIP causes double-conversion and colour shifts
+    (red/magenta cast, wrong skin tones).  sRGB + embedded profile means
+    Photoshop displays correctly without SWOP soft-proof interference."""
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
     buf = io.BytesIO()
@@ -902,11 +918,11 @@ def write_psd(out_path, canvas_w, canvas_h, layers):
     p(b'8BPS')
     p(struct.pack('>H', 1))     # version
     p(b'\x00' * 6)              # reserved
-    p(struct.pack('>H', 5))     # 5 channels: alpha + C M Y K
+    p(struct.pack('>H', 4))     # 4 channels: alpha + R G B
     p(struct.pack('>I', canvas_h))
     p(struct.pack('>I', canvas_w))
     p(struct.pack('>H', 8))     # 8 bits/channel
-    p(struct.pack('>H', 4))     # CMYK colour mode
+    p(struct.pack('>H', 3))     # RGB colour mode
 
     p(struct.pack('>I', 0))     # colour mode data (empty)
 
@@ -919,13 +935,19 @@ def write_psd(out_path, canvas_w, canvas_h, layers):
     res_blocks += (b'8BIM' + struct.pack('>H', 1005) +
                    b'\x00\x00' + struct.pack('>I', len(res_data)) + res_data)
 
+    # Resource 1039 — ICC profile (sRGB): prevents Photoshop applying SWOP
+    if _SRGB_ICC:
+        icc_padded = _SRGB_ICC + (b'\x00' if len(_SRGB_ICC) % 2 else b'')
+        res_blocks += (b'8BIM' + struct.pack('>H', 1039) +
+                       b'\x00\x00' + struct.pack('>I', len(_SRGB_ICC)) + icc_padded)
+
     p(struct.pack('>I', len(res_blocks)))
     p(res_blocks)
 
     # ── Layer & Mask Info ────────────────────────────────────────────────────
     lr_buf   = io.BytesIO()
     ld_buf   = io.BytesIO()
-    ch_order = [-1, 0, 1, 2, 3]   # alpha, C, M, Y, K
+    ch_order = [-1, 0, 1, 2]   # alpha, R, G, B
 
     for lyr in layers:
         img    = lyr['image']
@@ -935,13 +957,13 @@ def write_psd(out_path, canvas_w, canvas_h, layers):
         right  = left + img.width
         flags  = 0 if lyr.get('visible', True) else 2
 
-        ch_raw = _to_channels_cmyk(img)
+        ch_raw = _to_channels_rgb(img)
         ch_rle = {cid: _rle_encode_channel(ch_raw[cid], img.width, img.height)
                   for cid in ch_order}
 
         lr = io.BytesIO()
         lr.write(struct.pack('>iiii', top, left, bottom, right))
-        lr.write(struct.pack('>H', 5))  # 5 channels
+        lr.write(struct.pack('>H', 4))  # 4 channels
         for cid in ch_order:
             rc, cd = ch_rle[cid]
             lr.write(struct.pack('>hI', cid, 2 + len(rc) + len(cd)))
@@ -971,15 +993,16 @@ def write_psd(out_path, canvas_w, canvas_h, layers):
     p(struct.pack('>I', len(lmi)))
     p(lmi)
 
-    # ── Merged composite (CMYK + alpha) ─────────────────────────────────────
+    # ── Merged composite (RGB) ───────────────────────────────────────────────
     composite = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
     for lyr in layers:
         if lyr.get('visible', True):
             src = lyr['image'].convert("RGBA")
             composite.paste(src, (lyr['left'], lyr['top']), src)
-    comp_ch  = _to_channels_cmyk(composite)
-    comp_rle = [_rle_encode_channel(comp_ch[cid], canvas_w, canvas_h)
-                for cid in ch_order]
+    r, g, b, a = composite.split()
+    alpha    = Image.new("L", (canvas_w, canvas_h), 255)
+    comp_rle = [_rle_encode_channel(band.tobytes(), canvas_w, canvas_h)
+                for band in [alpha, r, g, b]]
     p(struct.pack('>H', 1))     # RLE encoding
     for rc, _  in comp_rle: p(rc)
     for _,  cd in comp_rle: p(cd)
