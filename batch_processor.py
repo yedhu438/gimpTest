@@ -1,0 +1,3184 @@
+"""
+Varsany Batch Processor
+========================
+Processes all unprocessed orders from the database.
+Generates layered PSD files for each order.
+
+Images : W:\\images\\Jan-Image\\ and W:\\images\\Feb-Image\\
+Fonts  : C:\\Varsany\\Fonts\\ + W:\\fonts\\ + system fonts
+Output : C:\\Varsany\\Output\\YYYY-MM-DD\\OrderID.psd
+
+Usage:
+    python batch_processor.py                  # all unprocessed orders
+    python batch_processor.py --limit 10       # first 10 only (test)
+    python batch_processor.py --order 203-xxx  # one specific order
+    python batch_processor.py --dry-run        # preview, no files written
+    python batch_processor.py --dpi 320        # full print resolution
+"""
+
+import os, json, struct, io, argparse, traceback, urllib.request, tempfile
+from datetime import datetime
+from PIL import Image, ImageDraw, ImageFont, ImageCms
+import pyodbc
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+except ImportError:
+    pass  # python-dotenv not installed — fall back to hardcoded defaults
+
+from db import get_connection as _db_get_connection
+
+try:
+    from synology_upload import SynologyUploader
+    SYNOLOGY_AVAILABLE = True
+except ImportError:
+    SYNOLOGY_AVAILABLE = False
+
+try:
+    from rembg import remove as rembg_remove
+    REMBG_AVAILABLE = True
+except ImportError:
+    REMBG_AVAILABLE = False
+
+
+# Editable text layer writer (TySh + Txt2 PSD blocks)
+try:
+    from psd_text_layer import build_editable_text_tagged_blocks, resolve_ps_font_name
+    EDITABLE_TEXT_AVAILABLE = True
+except ImportError:
+    EDITABLE_TEXT_AVAILABLE = False
+
+# ─── CONFIG ───────────────────────────────────────────────────────────────────
+# Database connection is centralised in db.py (reads from .env).
+
+# Paths — override any of these in your .env file
+_base         = os.environ.get("VARSANY_BASE",    r"C:\Varsany")
+_images_extra = os.environ.get("VARSANY_IMAGES",  r"W:\images\Feb-Image,W:\images\Jan-Image")
+IMAGE_FOLDERS = [p.strip() for p in _images_extra.split(",") if p.strip()] + \
+                [os.path.join(_base, "Uploads")]
+FONT_FOLDERS  = [os.path.join(_base, "Fonts")] + \
+                [p.strip() for p in os.environ.get("VARSANY_FONTS_EXTRA", r"W:\fonts").split(",") if p.strip()] + \
+                [r"C:\Windows\Fonts"]  # also pick up any fonts installed system-wide
+OUTPUT_FOLDER = os.environ.get("VARSANY_OUTPUT", os.path.join(_base, "Output"))
+LOG_FILE      = os.environ.get("VARSANY_LOG",    os.path.join(_base, "batch_log.txt"))
+TEMP_FOLDER   = os.environ.get("VARSANY_TEMP",   os.path.join(_base, "Temp"))
+
+# Auto-discover W:\test*\DTFUnshippedImages_* bulk download folders
+_W = r"W:\\"
+if os.path.exists(_W):
+    for _entry in os.listdir(_W):
+        if _entry.lower().startswith("test"):
+            _test_dir = os.path.join(_W, _entry)
+            if os.path.isdir(_test_dir):
+                for _sub in os.listdir(_test_dir):
+                    if _sub.startswith("DTFUnshippedImages"):
+                        IMAGE_FOLDERS.append(os.path.join(_test_dir, _sub))
+
+IMAGE_SERVER_URL = os.environ.get("IMAGE_SERVER_URL", "http://www.crssoft.co.uk/CustomOrderImages/")
+
+DPI       = 320              # 320 DPI (pixels/inch) — production DTF resolution
+PX_PER_CM = DPI / 2.54      # ~125.98 px/cm
+K_GAMMA   = 1.0             # K channel gamma — 1.0 = no adjustment (linear ICC conversion)
+
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# ─── BUILD IMAGE INDEX ────────────────────────────────────────────────────────
+
+print("Building image index...")
+IMAGE_INDEX = {}
+for _folder in IMAGE_FOLDERS:
+    if os.path.exists(_folder):
+        for _f in os.listdir(_folder):
+            IMAGE_INDEX[_f.lower()] = os.path.join(_folder, _f)
+print(f"  Indexed {len(IMAGE_INDEX):,} images")
+
+# ─── BUILD FONT INDEX ─────────────────────────────────────────────────────────
+# Maps normalised font name -> full file path
+# e.g. "bebasneuepro" -> "C:\\Varsany\\Fonts\\BebasNeue-Regular.ttf"
+
+FONT_INDEX = {}
+for _folder in FONT_FOLDERS:
+    if os.path.exists(_folder):
+        for _f in os.listdir(_folder):
+            if _f.lower().endswith(('.ttf', '.otf')):
+                _norm = os.path.splitext(_f)[0].lower()
+                _norm = _norm.replace(' ','').replace('-','').replace('_','')
+                FONT_INDEX[_norm] = os.path.join(_folder, _f)
+
+# Explicit aliases so database font names map to actual filenames
+FONT_ALIASES = {
+    # Standard fonts
+    "abel":             "abelregular",
+    "arial":            "arial",
+    "arialbold":        "arial",
+    "bebasneuefree":    "bebasneueregular",
+    "bebasneuepro":     "bebasneueregular",
+    "bebasneue":        "bebasneueregular",
+    "chewy":            "chewyregular",
+    "fondamento":       "fondamentoregular",
+    "helvetica":        "arial",
+    "lato":             "latoregular",
+    "latobold":         "latobold",
+    "permanentmarker":  "permanentmarkerregular",
+    "roboto":           "robotoregular",
+    "robotoregular":    "robotoregular",
+    "russoone":         "russooneregular",
+    "ultra":            "ultraregular",
+    "verdana":          "verdana",
+    # Premium texture fonts (database name → FONT_INDEX key)
+    "texturefont":      "smartkids",
+    "texture font":     "smartkids",
+    "texture":          "smartkids",
+    "blockfont":        "colorfulblocks",
+    "block font":       "colorfulblocks",
+    "colorfulblock":    "colorfulblocks",
+    "paintfont":        "paintsplashesrainbow",
+    "paint font":       "paintsplashesrainbow",
+    "paintsplashes":    "paintsplashesrainbow",
+    "mermaidfont":      "wavemermaid",
+    "mermaid font":     "wavemermaid",
+    "mermaid":          "wavemermaid",
+    "mermaidregular":   "wavemermaid",
+    "reflectionfont":   "refractionray",
+    "reflection font":  "refractionray",
+    "reflection":       "refractionray",
+    "refractionray":    "refractionray",
+    "refractionrayregular": "refractionray",
+    "camofont":         "camoblock",
+    "camo font":        "camoblock",
+    "camo":             "camoblock",
+    "camoblockregular": "camoblock",
+    "spideyfont":       "spiderweb",
+    "spidey font":      "spiderweb",
+    "spidey":           "spiderweb",
+    "spiderwebregular": "spiderweb",
+    "cozyfont":         "cozywinter",
+    "cozy font":        "cozywinter",
+    "cozy":             "cozywinter",
+    "cozywinterregular": "cozywinter",
+    "footballfont":     "soccerarmy",
+    "football font":    "soccerarmy",
+    "football":         "soccerarmy",
+    "footballregular":  "soccerarmy",
+    "flowerfont":       "tropicalflower",
+    "flower font":      "tropicalflower",
+    "flower":           "tropicalflower",
+    "tropicalflower":   "tropicalflower",
+    "tropicalflowerregular": "tropicalflower",
+    # Vinyl — TTF is installed
+    "vinyl":            "vinylfont",
+    "vinylFont":        "vinylfont",
+    "vinyl font":       "vinylfont",
+    "vinylfont":        "vinylfont",
+    # Non-print methods (flag to designer — no TTF, fall through to Arial placeholder)
+    "rhinestone":                   None,
+    "rhinestonefont":               None,
+    "embroidery":                   None,
+    "embroideryfont":               None,
+    "emroideryfont":                None,
+    "crystalfont":                  None,
+    "varsanycrystal":               None,
+    "varsanycrystalfont":           None,
+    "varsanyrhinestonefont":        None,
+    "25mmcapsrhinestonefont":       None,
+    # Custom fonts — files not yet installed (fall through to Arial)
+    "bsl":                          None,
+    "dtftext":                      None,
+    "glovesfont":                   None,
+    "shortsfont":                   None,
+    "supervibes":                   None,
+    "varsany":                      None,
+    "welliesfont":                  None,
+    "wellisfont":                   None,
+}
+
+print(f"  Fonts indexed: {list(FONT_INDEX.keys())}")
+
+# Keys in FONT_INDEX that belong to premium texture/specialty fonts
+PREMIUM_FONT_KEYS = {
+    "smartkids", "colorfulblocks", "paintsplashesrainbow",
+    "wavemermaid", "refractionray", "camoblock", "spiderweb",
+    "cozywinter", "soccerarmy", "tropicalflower",
+}
+
+# Per-font tracking multiplier applied to every hmtx advance width.
+# Full-width glyph images preserve transparent sidebearings, so T < 1.0 is safe when
+# the font has genuine LSB/RSB (the overlap region is transparent, not visible artwork).
+# Fonts whose artwork fills the full advance width must stay at 1.0 to avoid pixel overlap.
+FONT_TRACKING = {
+    # Reflection Font (Refraction Ray.otf): PNG bitmaps in SVG fill only ~65.5% of advance.
+    # Chrome pixel measurement A-Z: mean fill=0.655, min-safe=0.680 (S→T pair).
+    # T=0.68 → letters nearly touching; T=1.0 → ~200px visible gap per letter.
+    "refractionray": 0.68,
+    # Smart Kids font: SVG artwork fills ~67.9% of advance, min-safe=0.712 (Chrome measurement A-Z/a-z).
+    "smartkids": 0.72,
+    # Cozy Winter font: SVG artwork fills ~57.8% of advance, min-safe=0.599 (Chrome measurement A-Z).
+    "cozywinter": 0.61,
+    # camoblock, colorfulblocks, soccerarmy, paintsplashesrainbow, wavemermaid,
+    # spiderweb: artwork fills full advance → 1.0 (no entry = default).
+}
+
+# Per-font character-category scale corrections.
+# Generated by measure_premium_fonts.py — do not edit by hand.
+# Each entry: font_key → {category: ratio_relative_to_cap_height}
+# "upper"=A-Z, "lower"=a-z, "digit"=0-9, "special"=punctuation/symbols.
+# 1.0 means the category renders at the same height as uppercase (no correction).
+# Omitting a font or category means no correction for that font/category.
+FONT_CHAR_METRICS = {
+    # Generated by measure_premium_fonts.py on 2026-05-15.
+    # Ratios are relative to uppercase cap height (upper=1.0 is always reference).
+    # Values within 2% of 1.0 are ignored at render time (no resize applied).
+    # None means no SVG glyphs in that category — no correction applied.
+    "smartkids": {
+        "upper":   1.0,
+        "lower":   0.668,
+        "digit":   0.994,
+        "special": None,
+    },
+    "colorfulblocks": {
+        "upper":   1.0,
+        "lower":   1.0,
+        "digit":   1.013,   # within 2% — skipped
+        "special": None,
+    },
+    "paintsplashesrainbow": {
+        "upper":   1.0,
+        "lower":   1.0,
+        "digit":   1.0,
+        "special": 1.0,
+    },
+    "wavemermaid": {
+        "upper":   1.0,
+        "lower":   1.0,
+        "digit":   1.0,
+        "special": 1.0,
+    },
+    "refractionray": {
+        "upper":   1.0,
+        "lower":   0.758,
+        "digit":   0.758,
+        "special": None,
+    },
+    "camoblock": {
+        "upper":   1.0,
+        "lower":   0.893,
+        "digit":   0.892,
+        "special": None,
+    },
+    "spiderweb": {
+        "upper":   1.0,
+        "lower":   1.0,
+        "digit":   1.0,
+        "special": 1.0,
+    },
+    "cozywinter": {
+        "upper":   1.0,
+        "lower":   1.0,
+        "digit":   1.0,
+        "special": 1.0,
+    },
+    "soccerarmy": {
+        "upper":   1.0,
+        "lower":   1.0,
+        "digit":   1.013,   # within 2% — skipped
+        "special": None,
+    },
+    "tropicalflower": {
+        "upper":   1.0,
+        "lower":   1.0,
+        "digit":   1.017,   # within 2% — skipped
+        "special": None,    # no SVG special chars in this font
+    },
+}
+
+def _char_category(ch):
+    """Return 'upper', 'lower', 'digit', 'special', or 'other' for a character."""
+    if ch.isupper():   return "upper"
+    if ch.islower():   return "lower"
+    if ch.isdigit():   return "digit"
+    if ch.isspace():   return "other"
+    return "special"
+
+def _resolve_font_key(font_name):
+    """Return the FONT_INDEX key for font_name, or None if unmappable."""
+    if not font_name:
+        return None
+    norm = font_name.lower().replace(" ", "").replace("-", "").replace("_", "")
+    alias = FONT_ALIASES.get(norm)
+    if alias is not None:
+        return alias
+    return norm if norm in FONT_INDEX else None
+
+def has_premium_font(row):
+    """Return True if any zone in this order row uses a premium font.
+    Checks: (1) JSON PremiumFont field in FrontFonts/BackFonts (post-Feb-2026 format),
+            (2) FrontPremiumFont='Yes' DB column (live DB),
+            (3) font name resolves to a PREMIUM_FONT_KEY (pre-Feb-2026 fallback).
+    """
+    # Post-Feb-2026: font stored as JSON {"NormalFont":"...","PremiumFont":"..."}
+    for col in ("FrontFonts", "BackFonts", "PocketFonts", "SleeveFonts"):
+        if parse_is_premium_font(row.get(col) or ""):
+            return True
+    # Live DB has dedicated FrontPremiumFont column
+    for col in ("FrontPremiumFont", "BackPremiumFont", "PocketPremiumFont", "SleevePremiumFont"):
+        val = row.get(col)
+        if val and str(val).strip().lower() in ("yes", "1", "true"):
+            return True
+    # Pre-Feb-2026 fallback: font name matches a known premium key
+    for col in ("FrontFonts", "BackFonts", "PocketFonts", "SleeveFonts"):
+        key = _resolve_font_key(row.get(col) or "")
+        if key and key in PREMIUM_FONT_KEYS:
+            return True
+    return False
+
+
+def cm_to_px(cm): return int(round(cm * PX_PER_CM))
+
+# ─── CANVAS SIZES — from owner Canvases.xlsx ──────────────────────────────────
+PRODUCT_CANVAS = {
+    # T-shirts
+    "adulttshirt":    {"front": (cm_to_px(30), cm_to_px(30)), "back": (cm_to_px(30), cm_to_px(30)), "pocket": (cm_to_px(9),  cm_to_px(9))},
+    "kidstshirt":     {"front": (cm_to_px(23), cm_to_px(30)), "back": (cm_to_px(23), cm_to_px(30)), "pocket": (cm_to_px(9),  cm_to_px(9))},
+    # Hoodies
+    "adulthoodie":    {"front": (cm_to_px(25), cm_to_px(25)), "back": (cm_to_px(25), cm_to_px(25)), "pocket": (cm_to_px(9),  cm_to_px(9)), "sleeve": (cm_to_px(9), cm_to_px(7))},
+    "kidshoodie":     {"front": (cm_to_px(23), cm_to_px(20)), "back": (cm_to_px(23), cm_to_px(20)), "pocket": (cm_to_px(9),  cm_to_px(9))},
+    # Bags
+    "totebag":        {"front": (cm_to_px(28), cm_to_px(28)), "back": (cm_to_px(28), cm_to_px(28))},
+    "backpack":       {"front": (cm_to_px(18), cm_to_px(12))},
+    "makeupbag":      {"front": (cm_to_px(23), cm_to_px(14))},
+    "shoebag":        {"front": (cm_to_px(23), cm_to_px(14))},
+    "shoebag2":       {"front": (cm_to_px(14), cm_to_px(14))},
+    "stringbag":      {"front": (cm_to_px(22), cm_to_px(24))},
+    "knittingbag":    {"front": (cm_to_px(25), cm_to_px(21))},
+    # Accessories
+    "buckethat":      {"front": (cm_to_px(18), cm_to_px(5))},
+    "beanie":         {"front": (cm_to_px(9.5),cm_to_px(4.5))},
+    "socks":          {"front": (cm_to_px(6),  cm_to_px(12))},
+    "seatbelt":       {"front": (cm_to_px(18), cm_to_px(4))},
+    # Baby / Kids
+    "babyvest":       {"front": (cm_to_px(15), cm_to_px(17))},
+    "sleepsuit":      {"front": (cm_to_px(13), cm_to_px(18))},
+    "hodieblanket":   {"front": (cm_to_px(17), cm_to_px(5))},
+    # Home / Other
+    "cushion":        {"front": (cm_to_px(30), cm_to_px(30))},
+    "memorialplaque": {"front": (cm_to_px(13), cm_to_px(8))},
+    "golftowel":      {"front": (cm_to_px(17), cm_to_px(17))},
+    "golfcase":       {"front": (cm_to_px(15), cm_to_px(6))},
+    "slipper":        {"front": (cm_to_px(6),  cm_to_px(6))},
+    # Default fallback
+    "default":        {"front": (cm_to_px(30), cm_to_px(30)), "back": (cm_to_px(30), cm_to_px(30)), "pocket": (cm_to_px(9), cm_to_px(9))},
+}
+
+# ─── SKU PREFIX → PRODUCT KEY — from owner Canvases.xlsx ─────────────────────
+SKU_MAP = [
+    # Adult T-shirt
+    ("MenTee_",                       "adulttshirt"),
+    ("AnyTxtOverSizeTee_",            "adulttshirt"),
+    ("WmnTee_",                       "adulttshirt"),
+    ("PoloTee_",                      "adulttshirt"),
+    ("AdultPoloTee_",                 "adulttshirt"),
+    ("SignLan01_Tee_",                "adulttshirt"),
+    ("Custom04_Tee_",                 "adulttshirt"),
+    ("LegendSince",                   "adulttshirt"),
+    # Kids T-shirt
+    ("KidsTee_",                      "kidstshirt"),
+    ("SLan01KidsTee_",                "kidstshirt"),
+    ("PerSingleLetter01KidsTee_",     "kidstshirt"),
+    ("FootballKids",                  "kidstshirt"),
+    ("67BdayT02Kid",                  "kidstshirt"),
+    # Adult Hoodie
+    ("AnyTxtAdultHood_",              "adulthoodie"),
+    ("MenHood_",                      "adulthoodie"),
+    ("HandStand",                     "adulthoodie"),
+    ("SplitGirl",                     "adulthoodie"),
+    ("FballN",                        "adulthoodie"),
+    ("NewFball",                      "adulthoodie"),
+    # Kids Hoodie
+    ("AnyTxtKidsHood_",               "kidshoodie"),
+    ("KidsHood_",                     "kidshoodie"),
+    # Tote Bag
+    ("AnyTxtTote_",                   "totebag"),
+    ("Tote",                          "totebag"),
+    # Backpack
+    ("AnyTxtBckpck_",                 "backpack"),
+    ("BckPack",                       "backpack"),
+    ("Name01",                        "backpack"),
+    # Baby Vest
+    ("AnyTxtBabyVest_",               "babyvest"),
+    ("BabyVest",                      "babyvest"),
+    # Bucket Hat
+    ("AnyTextHat_",                   "buckethat"),
+    # Beanie
+    ("AnytxtBeanie_",                 "beanie"),
+    # Make Up Bag
+    ("AnyTxtMakUp_",                  "makeupbag"),
+    # Hoodie Blanket
+    ("AnyTxtBlanketHood_",            "hodieblanket"),
+    # Shoe Bag Sports
+    ("AnyTxtShoeB_",                  "shoebag"),
+    # Slipper
+    ("AnyTxtSlip",                    "slipper"),
+    # Socks
+    ("AnyTxtSocks",                   "socks"),
+    # Generic AnyTxt catch-all — MUST stay after all specific AnyTxt* entries above
+    ("AnyTxt",                        "adulttshirt"),
+    # Cushion
+    ("PCushion",                      "cushion"),
+    # Custom Tee variants (same canvas as standard tees)
+    ("CustomKidsTee_",                "kidstshirt"),   # e.g. CustomKidsTee_Blk78
+    ("Custom_Tee_",                   "adulttshirt"),  # e.g. Custom_Tee_BlkM
+    # Gym / Swim
+    ("GymLeo",                        "default"),
+    ("SwimSuit",                      "default"),
+]
+
+def _validate_sku_map():
+    """Warn if a short catch-all prefix appears BEFORE a longer specific prefix with a different key.
+    If triggered, adding the new specific prefix before the catch-all will silence the warning."""
+    shadowed = []
+    for i, (short, short_key) in enumerate(SKU_MAP):
+        for j, (long_prefix, long_key) in enumerate(SKU_MAP):
+            if (long_prefix != short and long_prefix.startswith(short)
+                    and short_key != long_key and i < j):
+                shadowed.append(
+                    f"  '{short}' ({short_key}) at position {i} is before "
+                    f"'{long_prefix}' ({long_key}) at position {j} — move '{short}' after it"
+                )
+    if shadowed:
+        print("ERROR: SKU_MAP order wrong — catch-all prefix appears before specific one:")
+        for s in shadowed:
+            print(s)
+        print("  Fix: move the catch-all entry to AFTER all its specific variants in SKU_MAP.")
+
+_validate_sku_map()
+
+# ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+def log(msg, level="INFO"):
+    ts   = datetime.now().strftime("%H:%M:%S")
+    line = f"[{ts}] [{level}] {msg}"
+    print(line)
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except:
+        pass
+
+def find_image(filename):
+    if not filename or not filename.strip():
+        return None
+    fname = filename.strip().lower()
+    if fname in IMAGE_INDEX:
+        return IMAGE_INDEX[fname]
+    base = os.path.splitext(fname)[0]
+    for ext in ['.jpg', '.jpeg', '.png', '.webp']:
+        if (base + ext) in IMAGE_INDEX:
+            return IMAGE_INDEX[base + ext]
+    # Fall back to downloading from image server
+    if IMAGE_SERVER_URL:
+        url = IMAGE_SERVER_URL.rstrip("/") + "/" + filename.strip()
+        dest = os.path.join(TEMP_FOLDER, filename.strip())
+        try:
+            os.makedirs(TEMP_FOLDER, exist_ok=True)
+            import urllib.request
+            urllib.request.urlretrieve(url, dest)
+            IMAGE_INDEX[fname] = dest
+            return dest
+        except Exception:
+            pass
+    return None
+
+def download_preview(url):
+    """Load a preview image from a URL or a local filename, return PIL Image or None."""
+    if not url or not url.strip():
+        return None
+    src = url.strip()
+    # Full URL → download
+    if src.startswith("http://") or src.startswith("https://"):
+        tmp = tempfile.mktemp(suffix=".jpg")
+        try:
+            urllib.request.urlretrieve(src, tmp)
+            img = Image.open(tmp).convert("RGBA")
+            return img
+        except Exception as e:
+            log(f"    Preview download failed: {e}", "WARN")
+            return None
+        finally:
+            try: os.remove(tmp)
+            except: pass
+    # Filename → look up in image index (same as customer images on local DB)
+    path = find_image(src)
+    if path:
+        try:
+            return Image.open(path).convert("RGBA")
+        except Exception as e:
+            log(f"    Preview load failed: {e}", "WARN")
+    return None
+
+def parse_image_json(json_str):
+    if not json_str or not json_str.strip():
+        return []
+    try:
+        d = json.loads(json_str.strip())
+        return [d[f"Image{i}"].strip() for i in range(1, 6) if d.get(f"Image{i}", "").strip()]
+    except:
+        return []
+
+def _parse_font_json(fonts_raw):
+    """Parse FrontFonts/BackFonts value. Returns (font_name, is_premium).
+    Handles both valid JSON (double quotes) and Python dict repr (single quotes).
+    """
+    if not fonts_raw:
+        return "Arial Bold", False
+    s = fonts_raw.strip()
+    if s.startswith("{"):
+        d = None
+        # Try JSON first (double quotes)
+        try:
+            d = json.loads(s)
+        except Exception:
+            pass
+        # Fallback: Python dict repr (single quotes from DB)
+        if d is None:
+            try:
+                import ast
+                d = ast.literal_eval(s)
+            except Exception:
+                pass
+        if d is not None:
+            premium = (d.get("PremiumFont") or "").strip()
+            normal  = (d.get("NormalFont")  or "").strip()
+            if premium and premium.lower() not in ("no", "none", ""):
+                return premium, True
+            return normal or "Arial", False
+    return s or "Arial", False
+
+def parse_font(fonts_raw):
+    """Return font name to use (premium takes priority over normal)."""
+    return _parse_font_json(fonts_raw)[0]
+
+def parse_is_premium_font(fonts_raw):
+    """Return True if this zone uses a premium font."""
+    return _parse_font_json(fonts_raw)[1]
+
+def parse_colour(colours_raw):
+    if not colours_raw:
+        return "#ffffff"
+    s = colours_raw.strip()
+    if s.startswith("{"):
+        try:
+            d = json.loads(s)
+            return d.get("Colour1") or d.get("colour1") or "#ffffff"
+        except:
+            pass
+    if s.startswith("#"):
+        return s
+    return "#ffffff"
+
+def parse_texts(raw):
+    """Parse customer text, preserving blank lines as spacers (capped at 1 consecutive blank).
+    Empty string "" in the returned list = one blank spacer line."""
+    if not raw or not raw.strip():
+        return []
+    raw = raw.strip()
+    if "|" in raw and "\n" not in raw:
+        return [t.strip() for t in raw.split("|") if t.strip()]
+    lines = raw.split("\n")
+    result = []
+    prev_blank = False
+    for line in lines:
+        s = line.strip()
+        if s:
+            result.append(s)
+            prev_blank = False
+        else:
+            # Only add one blank spacer between real text lines (not at start)
+            if result and not prev_blank:
+                result.append("")
+            prev_blank = True
+    return result
+
+def hex_to_rgb(hex_col):
+    h = hex_col.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c*2 for c in h)
+    try:
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+    except:
+        return (255, 255, 255)
+
+def get_font(font_name, size_px):
+    norm = font_name.lower().replace(' ','').replace('-','').replace('_','')
+    # Check aliases first
+    resolved = FONT_ALIASES.get(norm)
+    if resolved is None:
+        pass  # known non-renderable font (rhinestone etc) - fall through to arial
+    elif resolved and resolved in FONT_INDEX:
+        try:
+            return ImageFont.truetype(FONT_INDEX[resolved], size_px)
+        except:
+            pass
+    # Direct match in index
+    if norm in FONT_INDEX:
+        try:
+            return ImageFont.truetype(FONT_INDEX[norm], size_px)
+        except:
+            pass
+    # Partial match - find any font whose key contains the norm
+    for key, path in FONT_INDEX.items():
+        if norm in key or key in norm:
+            try:
+                return ImageFont.truetype(path, size_px)
+            except:
+                pass
+    # System fonts
+    system_map = {
+        "arial": "arialbd.ttf", "arialbold": "arialbd.ttf",
+        "timesnewroman": "times.ttf", "couriernew": "cour.ttf",
+        "verdana": "verdana.ttf", "impact": "impact.ttf",
+        "helvetica": "arialbd.ttf", "helveticabold": "arialbd.ttf", "georgia": "georgia.ttf",
+        "tahoma": "tahoma.ttf",
+    }
+    if norm in system_map:
+        try:
+            return ImageFont.truetype(system_map[norm], size_px)
+        except:
+            pass
+    # Final fallback
+    try:
+        return ImageFont.truetype("arialbd.ttf", size_px)
+    except:
+        return ImageFont.load_default()
+
+def detect_category(sku):
+    if not sku:
+        return "Other"
+    s = sku.lower()
+    if "polo" in s:                                    return "Polo"
+    if "kidstee" in s or "kidstshirt" in s:            return "Kids T-Shirt"
+    if "hood" in s:                                    return "Hoodie"
+    if "tote" in s:                                    return "Tote Bag"
+    if "slipper" in s:                                 return "Slipper"
+    if "baby" in s or "vest" in s:                     return "Baby Vest"
+    if "backpack" in s or "bckpck" in s:               return "Backpack"
+    if "mentee" in s or "_tee_" in s or "wmntee" in s: return "T-Shirt"
+    if "hat" in s or "cap" in s or "beanie" in s:      return "Hat"
+    if "gym" in s or "leo" in s or "legsui" in s:      return "Gym & Leotard"
+    if "dart" in s:                                    return "Dart Case"
+    if "towel" in s or "twl" in s:                     return "Towel"
+    if "rainsuit" in s or "wellis" in s or "socks" in s or "keychain" in s: return "Accessories"
+    if "lan" in s:                                     return "Sign Language"
+    return "Other"
+
+def sku_colour_folder(sku):
+    """Return 'black', 'white', or '' (save directly, no sub-folder) from SKU colour code."""
+    if not sku:
+        return ""
+    s = sku.lower()
+    if "blk" in s:  return "black"
+    if "wht" in s:  return "white"
+    return ""
+
+def is_multizone_row(row):
+    """True if the row has content in more than one print zone (front+back, +sleeve, etc.)."""
+    active = 0
+    if row.get("IsFrontLocation") or (row.get("FrontImage") or "").strip() or (row.get("FrontText") or "").strip():
+        active += 1
+    if row.get("IsBackLocation") or (row.get("BackImage") or "").strip() or (row.get("BackText") or "").strip():
+        active += 1
+    if row.get("IsPocketLocation") or (row.get("PocketImage") or "").strip() or (row.get("PocketText") or "").strip():
+        active += 1
+    if row.get("IsSleeveLocation") or (row.get("SleeveImage") or "").strip() or (row.get("SleeveText") or "").strip():
+        active += 1
+    return active > 1
+
+def is_emb_rhine_row(row):
+    """True if any zone uses an embroidery or rhinestone font (handled manually, not DTF)."""
+    for field in ("FrontFonts", "BackFonts", "PocketFonts", "SleeveFonts"):
+        val = (row.get(field) or "").lower()
+        if "emb" in val or "rhine" in val:
+            return True
+    return False
+
+def detect_product(sku):
+    """Map SKU to product key using SKU_MAP from owner canvas file.
+    Tries each prefix in order — first match wins.
+    Falls back to keyword matching, then default.
+    """
+    if not sku:
+        return "default"
+    # Longest-prefix match — most specific entry wins over generic catch-alls like "AnyTxt"
+    for prefix, product_key in sorted(SKU_MAP, key=lambda x: -len(x[0])):
+        if sku.startswith(prefix):
+            return product_key
+    # Keyword fallback for edge cases
+    s = sku.lower()
+    if "kidstee" in s:          return "kidstshirt"
+    if "kidshoo" in s:          return "kidshoodie"
+    if "hood" in s:             return "adulthoodie"
+    if "tote" in s:             return "totebag"
+    if "slipper" in s:          return "slipper"
+    if "baby" in s:             return "babyvest"
+    if "vest" in s:             return "babyvest"
+    if "backpack" in s or "bckpck" in s: return "backpack"
+    if "beanie" in s:           return "beanie"
+    if "hat" in s:              return "buckethat"
+    if "tee" in s or "polo" in s: return "adulttshirt"
+    return "default"
+
+def get_dims(product, zone):
+    spec = PRODUCT_CANVAS.get(product, PRODUCT_CANVAS["default"])
+    return spec.get(zone, spec.get("front", (cm_to_px(30), cm_to_px(30))))
+
+# ─── PSD WRITER ───────────────────────────────────────────────────────────────
+
+def _pack_layer_name(s):
+    b = s.encode("latin-1", errors="replace")[:255]
+    data = bytes([len(b)]) + b
+    pad = (4 - len(data) % 4) % 4
+    return data + b'\x00' * pad
+
+def _find_swop_profile():
+    # Project-bundled copy takes priority — works on any machine without Photoshop
+    _here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(_here, "icc", "USWebCoatedSWOP.icc"),
+        r"C:\Windows\System32\spool\drivers\color\USWebCoatedSWOP.icc",
+        r"C:\Program Files\Common Files\Adobe\Color\Profiles\Recommended\USWebCoatedSWOP.icc",
+        r"C:\Program Files (x86)\Common Files\Adobe\Color\Profiles\Recommended\USWebCoatedSWOP.icc",
+        r"C:\ProgramData\Adobe\Color\Profiles\Recommended\USWebCoatedSWOP.icc",
+        os.path.expanduser(r"~\AppData\Roaming\Adobe\Color\Profiles\USWebCoatedSWOP.icc"),
+    ]
+    # Dynamically find any installed Photoshop version (2020, 2021, … 2026+)
+    adobe_root = r"C:\Program Files\Adobe"
+    if os.path.isdir(adobe_root):
+        for folder in sorted(os.listdir(adobe_root), reverse=True):  # newest first
+            if "Photoshop" in folder:
+                for sub in ("Required\\ICC Profiles", "Presets\\Color Profiles"):
+                    candidates.append(
+                        os.path.join(adobe_root, folder, sub, "USWebCoatedSWOP.icc")
+                    )
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+_ICC_PATH = _find_swop_profile()
+if not _ICC_PATH:
+    import warnings
+    warnings.warn("USWebCoatedSWOP.icc not found — copy it to v4/icc/ for accurate CMYK output")
+
+def _load_icc_bytes():
+    if _ICC_PATH and os.path.isfile(_ICC_PATH):
+        with open(_ICC_PATH, 'rb') as f:
+            return f.read()
+    return None
+
+_cmyk_transform = None
+_k_scale        = 1.0  # stretch factor so pure black K reaches 255 after ICC conversion
+
+def _get_cmyk_transform():
+    """Build a cached sRGB → SWOP v2 ImageCms transform for accurate colour conversion."""
+    global _cmyk_transform, _k_scale
+    if _cmyk_transform is None:
+        srgb = ImageCms.createProfile("sRGB")
+        if _ICC_PATH:
+            swop = ImageCms.getOpenProfile(_ICC_PATH)
+            _cmyk_transform = ImageCms.buildTransform(
+                srgb, swop, "RGB", "CMYK",
+                renderingIntent=ImageCms.Intent.PERCEPTUAL,
+                flags=0x2000,  # black point compensation
+            )
+            # Calibrate K stretch: find what K value pure black (0,0,0) produces
+            _black  = Image.new("RGB", (1, 1), (0, 0, 0))
+            _max_k  = ImageCms.applyTransform(_black, _cmyk_transform).getpixel((0, 0))[3]
+            _k_scale = 255 / _max_k if _max_k > 0 else 1.0
+        else:
+            _cmyk_transform = None
+    return _cmyk_transform
+
+def _rgb_to_cmyk(rgb_img):
+    """Convert an RGB PIL image to CMYK.
+    Uses PIL's direct formula (no press ICC profile) — SWOP v2 is for offset
+    printing and over-darkens DTF output. PIL gives brighter, truer colours."""
+    import numpy as np
+    rgb = rgb_img.convert("RGB")
+    cmyk = rgb.convert("CMYK")
+    # Snap essentially-pure-black pixels to pure K — prevents brownish CMY tint
+    # that PIL's formula creates for very dark pixels on DTF film.
+    # Threshold 8: only pixels where ALL channels < 8 are affected (true black).
+    # Dark hair, shadows, coloured darks are all safely above this cutoff.
+    rgb_arr  = np.array(rgb, dtype=np.int32)
+    cmyk_arr = np.array(cmyk)
+    dark = rgb_arr.max(axis=2) < 8
+    cmyk_arr[dark] = [0, 0, 0, 255]
+    return Image.fromarray(cmyk_arr, "CMYK")
+
+def _to_channels_rgb(img):
+    """Convert RGBA PIL image → RGB + alpha channel dict for PSD.
+    Channel IDs: -1=alpha, 0=R, 1=G, 2=B. Values are straight (not inverted)."""
+    rgba = img.convert("RGBA")
+    r, g, b, a = rgba.split()
+    return {
+        -1: a.tobytes(),
+         0: r.tobytes(),
+         1: g.tobytes(),
+         2: b.tobytes(),
+    }
+
+def _packbits_row(data: bytes) -> bytes:
+    """PackBits-encode one scanline."""
+    result = bytearray()
+    i, n = 0, len(data)
+    while i < n:
+        val = data[i]
+        j = i + 1
+        while j < n and j - i < 128 and data[j] == val:
+            j += 1
+        rlen = j - i
+        if rlen >= 2:
+            result.append((257 - rlen) & 0xFF)
+            result.append(val)
+            i = j
+        else:
+            lstart = i
+            i += 1
+            while i < n and i - lstart < 128:
+                if i + 1 < n and data[i] == data[i + 1]:
+                    break
+                i += 1
+            result.append(i - lstart - 1)
+            result.extend(data[lstart:i])
+    return bytes(result)
+
+def _rle_encode_channel(raw: bytes, width: int, height: int):
+    """PackBits-encode a full channel. Returns (row_counts_bytes, compressed_bytes)."""
+    rows = [_packbits_row(raw[r * width:(r + 1) * width]) for r in range(height)]
+    return struct.pack(f'>{height}H', *[len(r) for r in rows]), b''.join(rows)
+
+def write_psd(out_path, canvas_w, canvas_h, layers):
+    """Write an RGB layered PSD (8-bit, transparent). RGB preserves customer
+    image colours exactly — DTF RIP handles colour management at print time."""
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
+    buf = io.BytesIO()
+    p   = buf.write
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    p(b'8BPS')
+    p(struct.pack('>H', 1))     # version
+    p(b'\x00' * 6)              # reserved
+    p(struct.pack('>H', 4))     # 4 channels: alpha + R G B
+    p(struct.pack('>I', canvas_h))
+    p(struct.pack('>I', canvas_w))
+    p(struct.pack('>H', 8))     # 8 bits/channel
+    p(struct.pack('>H', 3))     # RGB colour mode
+
+    p(struct.pack('>I', 0))     # colour mode data (empty)
+
+    # ── Image Resources ──────────────────────────────────────────────────────
+    res_blocks = b''
+
+    # Resource 1005 — resolution (DPI stored as 16.16 fixed-point)
+    dpi_fixed = DPI << 16
+    res_data  = struct.pack('>IHHIHH', dpi_fixed, 1, 1, dpi_fixed, 1, 1)
+    res_blocks += (b'8BIM' + struct.pack('>H', 1005) +
+                   b'\x00\x00' + struct.pack('>I', len(res_data)) + res_data)
+
+    # ICC profile intentionally omitted — SWOP v2 makes Photoshop render colours
+    # darker than the source, which is wrong for DTF (no dot gain on film).
+
+    p(struct.pack('>I', len(res_blocks)))
+    p(res_blocks)
+
+    # ── Layer & Mask Info ────────────────────────────────────────────────────
+    lr_buf   = io.BytesIO()
+    ld_buf   = io.BytesIO()
+    ch_order = [-1, 0, 1, 2]   # alpha, R, G, B
+
+    for lyr in layers:
+        img    = lyr['image']
+        top    = lyr['top']
+        left   = lyr['left']
+        bottom = top  + img.height
+        right  = left + img.width
+        flags  = 0 if lyr.get('visible', True) else 2
+
+        ch_raw = _to_channels_rgb(img)
+        ch_rle = {cid: _rle_encode_channel(ch_raw[cid], img.width, img.height)
+                  for cid in ch_order}
+
+        lr = io.BytesIO()
+        lr.write(struct.pack('>iiii', top, left, bottom, right))
+        lr.write(struct.pack('>H', 4))  # 4 channels
+        for cid in ch_order:
+            rc, cd = ch_rle[cid]
+            lr.write(struct.pack('>hI', cid, 2 + len(rc) + len(cd)))
+        lr.write(b'8BIM')
+        lr.write(b'norm')
+        lr.write(struct.pack('>B', lyr.get('opacity', 255)))
+        lr.write(struct.pack('>B', 0))
+        lr.write(struct.pack('>B', flags))
+        lr.write(b'\x00')
+        name_bytes = _pack_layer_name(lyr['name'])
+        extra = struct.pack('>I', 0) + struct.pack('>I', 0) + name_bytes
+        lr.write(struct.pack('>I', len(extra)))
+        lr.write(extra)
+        lr_buf.write(lr.getvalue())
+
+        for cid in ch_order:
+            rc, cd = ch_rle[cid]
+            ld_buf.write(struct.pack('>H', 1))  # RLE (PackBits)
+            ld_buf.write(rc)
+            ld_buf.write(cd)
+
+    layer_info = struct.pack('>h', len(layers)) + lr_buf.getvalue() + ld_buf.getvalue()
+    if len(layer_info) % 4:
+        layer_info += b'\x00' * (4 - len(layer_info) % 4)
+
+    lmi = struct.pack('>I', len(layer_info)) + layer_info + struct.pack('>I', 0)
+    p(struct.pack('>I', len(lmi)))
+    p(lmi)
+
+    # ── Merged composite (RGB) ───────────────────────────────────────────────
+    composite = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
+    for lyr in layers:
+        if lyr.get('visible', True):
+            composite.paste(lyr['image'].convert("RGBA"),
+                            (lyr['left'], lyr['top']),
+                            lyr['image'].convert("RGBA"))
+    r, g, b, a = composite.split()
+    alpha = Image.new("L", (canvas_w, canvas_h), 255)
+    comp_rle = [_rle_encode_channel(band.tobytes(), canvas_w, canvas_h)
+                for band in [alpha, r, g, b]]
+    p(struct.pack('>H', 1))     # RLE encoding
+    for rc, _  in comp_rle: p(rc)
+    for _,  cd in comp_rle: p(cd)
+
+    with open(out_path, 'wb') as f:
+        f.write(buf.getvalue())
+    return out_path
+
+# ─── LAYER BUILDERS ───────────────────────────────────────────────────────────
+
+def build_image_layer(img_path, w, h, sku=None, no_bg_remove=False):
+    if not img_path or not os.path.isfile(img_path):
+        return Image.new("RGBA", (1, 1), (0, 0, 0, 0)), 0, 0
+    src = Image.open(img_path).convert("RGBA")
+
+    # Auto background removal: if image background matches garment colour, remove it
+    garment_rgb = get_garment_rgb(sku) if sku else None
+    if not no_bg_remove and garment_rgb and image_bg_matches_garment(src, garment_rgb):
+        log(f"  Auto bg-remove: background matches garment colour {garment_rgb}", "INFO")
+        src = remove_background(src, garment_rgb=garment_rgb)
+
+    # Alpha threshold — remove near-transparent noise pixels
+    r, g, b, a = src.split()
+    a = a.point(lambda x: 0 if x < 128 else x)
+    src = Image.merge("RGBA", (r, g, b, a))
+
+    # Crop to content bounding box so transparent borders (left by bg-removal)
+    # don't shrink the design when it is scaled to fill the canvas
+    bbox = src.getbbox()
+    if bbox:
+        src = src.crop(bbox)
+
+    # Contain scaling: fit within zone (w × h) keeping aspect ratio.
+    ratio = min(w / src.width, h / src.height)
+    nw    = max(1, int(src.width  * ratio))
+    nh    = max(1, int(src.height * ratio))
+    src = src.resize((nw, nh), Image.LANCZOS)
+    # Centre within the zone so landscape images don't pin to the top-left corner.
+    top  = (h - nh) // 2
+    left = (w - nw) // 2
+    return src, top, left
+
+try:
+    from pilmoji import Pilmoji
+    PILMOJI_AVAILABLE = True
+except ImportError:
+    PILMOJI_AVAILABLE = False
+
+# ─── CHROME SVG COLOUR FONT RENDERER ─────────────────────────────────────────
+# Fonts like RefractionRay, Smart Kids, Cozy Winter store glyphs as SVG only.
+# PIL/FreeType cannot render them. We fall back to headless Chrome which
+# supports all OpenType SVG colour fonts natively.
+
+CHROME_EXE = None
+for _p in [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+]:
+    if os.path.exists(_p):
+        CHROME_EXE = _p
+        break
+
+# Fonts that need Chrome to render correctly:
+#   (a) PIL renders zero pixels (SVG/colour-only, no outline fallback), OR
+#   (b) font has an SVG/COLR/sbix colour table — PIL renders outline fallback only,
+#       which loses all the colour/texture effect (e.g. Wavemermaid grey outlines).
+# Only checked for PREMIUM_FONT_KEYS so standard/system fonts are not affected.
+SVG_ONLY_FONT_KEYS = set()
+
+def _test_font_renders(path):
+    """Return True if this font file produces visible pixels when rendering 'A'."""
+    try:
+        from PIL import ImageFont as _IF, Image as _Im, ImageDraw as _ID
+        import numpy as _np
+        _f   = _IF.truetype(path, 200)
+        _img = _Im.new("RGBA", (300, 300), (0, 0, 0, 0))
+        _ID.Draw(_img).text((10, 10), "A", font=_f, fill=(0, 0, 0, 255))
+        return _np.array(_img)[:, :, 3].max() > 0
+    except Exception:
+        return False  # can't load at all → also needs Chrome
+
+def _has_colour_table(path):
+    """Return True if the font has SVG/COLR/sbix colour glyph tables."""
+    try:
+        from fontTools.ttLib import TTFont as _TT
+        _tt = _TT(path, lazy=True)
+        return any(t in _tt for t in ('SVG ', 'COLR', 'sbix'))
+    except Exception:
+        return False
+
+def _auto_tracking_from_font(path):
+    """Compute tracking multiplier from font glyph fill ratios for A-Z / a-z.
+    fill_ratio = mean(glyph_bbox_width / advance_width).
+    tracking   = 1 − (1 − fill_ratio) × 0.5  (removes half the built-in sidebearing).
+    Returns 1.0 on any error."""
+    try:
+        from fontTools.ttLib import TTFont as _TT
+        _ft   = _TT(path, lazy=True)
+        _hmtx = _ft['hmtx'].metrics
+        _cmap = _ft.getBestCmap()
+        _glyf = _ft.get('glyf')
+        _ratios = []
+        for _cp in list(range(ord('A'), ord('Z') + 1)) + list(range(ord('a'), ord('z') + 1)):
+            _gname = _cmap.get(_cp) if _cmap else None
+            if not _gname:
+                continue
+            _adv, _lsb = _hmtx.get(_gname, (0, 0))
+            if _adv <= 0:
+                continue
+            _w = None
+            if _glyf:
+                try:
+                    _g = _glyf[_gname]
+                    if hasattr(_g, 'xMax') and _g.xMax is not None:
+                        _w = _g.xMax - _g.xMin
+                except Exception:
+                    pass
+            if _w is None or _w <= 0:
+                _w = _adv - 2 * max(0, _lsb)   # proxy: assume symmetric sidebearings
+            if _w > 0:
+                _ratios.append(min(1.0, _w / _adv))
+        if not _ratios:
+            return 1.0
+        _fill = max(0.50, min(1.0, sum(_ratios) / len(_ratios)))
+        return round(1.0 - (1.0 - _fill) * 0.5, 3)
+    except Exception:
+        return 1.0
+
+for _key, _path in FONT_INDEX.items():
+    if _key in PREMIUM_FONT_KEYS:
+        if not _test_font_renders(_path) or _has_colour_table(_path):
+            SVG_ONLY_FONT_KEYS.add(_key)
+
+if SVG_ONLY_FONT_KEYS:
+    print(f"  SVG colour fonts (Chrome renderer): {sorted(SVG_ONLY_FONT_KEYS)}")
+
+if SVG_ONLY_FONT_KEYS:
+    for _k in sorted(SVG_ONLY_FONT_KEYS):
+        _t = FONT_TRACKING.get(_k, 1.0)
+        print(f"  Font tracking: {_t}  ({_k})")
+
+def _is_premium_font_name(font_name):
+    """Return True if this font is a premium colour font (all go through Chrome)."""
+    key = _resolve_font_key(font_name)
+    return key in PREMIUM_FONT_KEYS
+
+def _is_svg_only_font(font_name):
+    """Return True if this font requires Chrome to render (PIL fails)."""
+    key = _resolve_font_key(font_name)
+    return key in SVG_ONLY_FONT_KEYS
+
+def build_text_layer_chrome(text_lines, font_name, colour_hex, canvas_w):
+    """Render premium SVG colour fonts using Chrome.
+
+    Strategy A (primary): one HTML page per text block with @font-face pointing
+    directly at the font file via --allow-file-access-from-files.  Single Chrome
+    call per text block — no profile-lock issues, handles kerning automatically.
+
+    Strategy B (fallback): glyph-by-glyph SVG render — one Chrome call per
+    character, composited in PIL.  Avoids CSS font-rendering limitations.
+
+    Returns RGBA PIL image, or None on failure.
+    """
+    if not CHROME_EXE:
+        return None
+    real_lines = [l for l in text_lines if l.strip()]
+    if not real_lines:
+        return None
+
+    key       = _resolve_font_key(font_name)
+    font_path = FONT_INDEX.get(key, "")
+    if not font_path:
+        return None
+
+    # Prefer OTF — it carries the full SVG colour glyph data
+    otf_path = font_path.rsplit(".", 1)[0] + ".otf"
+    if os.path.exists(otf_path):
+        font_path = otf_path
+
+    import subprocess, numpy as np, re, html as _html
+
+    os.makedirs(TEMP_FOLDER, exist_ok=True)
+
+    # ── STRATEGY A: glyph-collage SVG (single Chrome call, correct font colours) ─
+    # Each unique character is rendered as an inline SVG <img> data-URL element.
+    # SVG rendering preserves the font's built-in colour data (unlike CSS @font-face).
+    # All glyphs are placed in one HTML page → one Chrome call, no profile-lock issues.
+    def _try_collage_render():
+        import base64 as _b64
+
+        try:
+            from fontTools.ttLib import TTFont
+        except ImportError:
+            return None
+
+        try:
+            ft_font     = TTFont(font_path)
+            svg_table   = ft_font.get('SVG ')
+            cmap        = ft_font.getBestCmap()
+            glyph_order = ft_font.getGlyphOrder()
+            upem        = ft_font['head'].unitsPerEm
+            ascender    = ft_font['hhea'].ascent
+            descender   = ft_font['hhea'].descent   # negative
+            vb_h        = ascender - descender
+            hmtx        = ft_font['hmtx'].metrics
+        except Exception:
+            return None
+
+        if not svg_table:
+            return None
+
+        svg_map = {}
+        for doc in svg_table.docList:
+            for gid in range(doc.startGlyphID, doc.endGlyphID + 1):
+                svg_map[gid] = (doc.data,
+                                doc.startGlyphID != doc.endGlyphID)  # shared doc?
+
+        # Render glyphs at the actual output size so Chrome produces
+        # sharp detail (football patterns, textures etc.) without any
+        # upscaling step.  Target: each glyph fills its share of canvas width.
+        # We cap at 2400px so the collage HTML doesn't exceed Chrome's limits.
+        max_chars = max(len(l) for l in real_lines if l)
+        target_w  = int(canvas_w * 0.85 / max(1, max_chars))   # px per char
+        # Use ×4 multiplier so glyphs render at high resolution before any
+        # scale-to-canvas step — prevents blurring on upscale.
+        glyph_h   = max(800, min(2400, target_w * 4))
+
+        # Square viewBox: "0 -850 1000 1000" — same width and height (1000 units).
+        # vb_top=-850 captures the full cap height (700u) + 150u buffer above.
+        # The viewBox bottom is at y=+150, covering descenders.
+        # Square viewBox + square element = x_scale == y_scale == glyph_h/1000,
+        # so glyph proportions are preserved exactly (no distortion).
+        # scale = adv_px factor; sf = composition advance factor — both glyph_h/1000.
+        vb_top      = -850
+        vb_h_render = 1000  # square viewBox (== upem)
+        scale       = glyph_h / upem            # glyph_h / 1000
+
+        # ── Collect unique characters and prepare their SVG ──────────────────
+        all_chars = sorted(set(ch for l in text_lines for ch in l if ch.strip()))
+        char_svg  = {}   # ch → (adv_px, fixed_svg_string)
+        char_gid  = {}   # ch → gid
+
+        for ch in all_chars:
+            cp         = ord(ch)
+            glyph_name = cmap.get(cp)
+            if not glyph_name:
+                continue
+            try:
+                gid = glyph_order.index(glyph_name)
+            except ValueError:
+                continue
+            entry = svg_map.get(gid)
+            if not entry:
+                continue
+            svg_raw, shared = entry
+            adv_units = hmtx.get(glyph_name, (upem // 3, 0))[0]
+            adv_px    = max(1, int(adv_units * scale))
+            h_px      = glyph_h   # viewport height = glyph_h (= vb_h_render * scale)
+
+            svg = svg_raw
+            # Force a UNIFORM viewBox for every glyph so all letters are
+            # rendered at the same visual scale regardless of how the font
+            # designer laid out the SVG coordinate space per glyph.
+            # The viewBox spans the full advance width horizontally and the
+            # standard cap-height range vertically.
+            vb_attr = f'viewBox="0 {vb_top} {upem} {vb_h_render}"'
+            if 'viewBox' in svg:
+                svg = re.sub(r'viewBox="[^"]*"', vb_attr, svg)
+            else:
+                svg = svg.replace('<svg', f'<svg {vb_attr}', 1)
+            # Pixel dimensions: width scales with advance, height = glyph_h.
+            # Both are derived from the SAME scale factor so all glyphs have
+            # identical height and proportional widths.
+            # Square element (h_px × h_px) + square viewBox (1000 × 1000):
+            # x_scale = y_scale = h_px/1000, so glyph proportions are exact.
+            # Default "xMidYMid meet" has no letterboxing effect on a
+            # square-on-square layout — content fills the full element.
+            # The advance-width crop (x=0..adv_px) is taken from the left
+            # side of the square element in the crop step below.
+            svg = re.sub(r'\s+preserveAspectRatio="[^"]*"', '', svg)
+            svg = re.sub(r'\s+width="[^"]*"',  '', svg)
+            svg = re.sub(r'\s+height="[^"]*"', '', svg)
+            svg = svg.replace('<svg', f'<svg width="{h_px}px" height="{h_px}px"', 1)
+            # Shared document: inject CSS to show only this glyph's <g> element
+            if shared:
+                hide = (f'<style>g{{display:none}}'
+                        f'#glyph{gid}{{display:inline}}'
+                        f'#glyph\\.{gid}{{display:inline}}</style>')
+                svg = re.sub(r'(<svg[^>]*>)', r'\1' + hide, svg, count=1)
+
+            char_svg[ch] = (adv_px, h_px, svg)
+            char_gid[ch] = gid
+
+        if not char_svg:
+            return None
+
+        # ── Collect fallback (emoji / missing-glyph) characters ──────────────
+        # These are rendered in a separate Chrome pass AFTER cap_h is known
+        # so they can be sized to match the premium font letter height exactly.
+        _VARIATION_SELECTORS = set(range(0xFE00, 0xFE10)) | {0xFE0F}
+        emoji_fallback = set()   # chars not in cmap at all → Chrome emoji pass
+        outline_only   = set()   # chars in cmap but no SVG colour entry → PIL + colour
+        for _line in text_lines:
+            for _ch in _line:
+                _cp = ord(_ch)
+                if not _ch.strip() or _cp in _VARIATION_SELECTORS:
+                    continue
+                if _ch not in char_svg:
+                    if cmap.get(_cp):
+                        outline_only.add(_ch)   # outline glyph exists, just no colour table
+                    else:
+                        emoji_fallback.add(_ch)
+
+        # ── Build one-line collage HTML (premium font glyphs only) ───────────
+        # Each glyph element is h_px × h_px (square) so Chrome renders it
+        # without distortion.  x_pos tracks the LEFT edge of each element;
+        # the crop step below takes only the advance-width slice (0..adv_px)
+        # from the left side of the square element.
+        collage_w = sum(v[1] for v in char_svg.values()) + 10  # v[1]=h_px (square width)
+        collage_h = max((v[1] for v in char_svg.values()), default=glyph_h) + 10
+
+        items_html = ""
+        x_pos = {}
+        cx = 0
+        for ch, (adv_px, h_px, svg_str) in char_svg.items():
+            svg_b64 = _b64.b64encode(svg_str.encode("utf-8")).decode("ascii")
+            items_html += (
+                f'<img style="position:absolute;left:{cx}px;top:0;'
+                f'width:{h_px}px;height:{h_px}px;display:block" '  # square element
+                f'src="data:image/svg+xml;base64,{svg_b64}">\n'
+            )
+            x_pos[ch] = cx
+            cx += h_px  # advance by element width (= glyph_h), not adv_px
+
+        html_src = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{margin:0;padding:0}}html,body{{background:#ffffff;overflow:hidden}}
+.c{{position:relative;width:{collage_w}px;height:{collage_h}px}}
+</style></head><body>
+<div class="c">{items_html}</div>
+</body></html>"""
+
+        _pid      = os.getpid()
+        html_path = os.path.join(TEMP_FOLDER, f"glyph_collage_{_pid}.html")
+        png_path  = os.path.join(TEMP_FOLDER, f"glyph_collage_{_pid}.png")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_src)
+        try:
+            if os.path.exists(png_path):
+                os.remove(png_path)
+        except Exception:
+            pass
+
+        cmd = [
+            CHROME_EXE, "--headless", "--no-sandbox",
+            "--disable-gpu", "--disable-extensions",
+            "--no-first-run", "--disable-sync",
+            f"--screenshot={png_path}",
+            f"--window-size={collage_w},{collage_h}",
+            "file:///" + html_path.replace("\\", "/"),
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=40)
+        except Exception:
+            return None
+
+        if not os.path.exists(png_path):
+            return None
+        try:
+            collage_img = Image.open(png_path)
+            collage_img.load()
+            collage_img = collage_img.convert("RGBA")
+        except Exception:
+            return None
+        for _f in (html_path, png_path):
+            try: os.remove(_f)
+            except Exception: pass
+
+        # Handle HiDPI: Chrome may return 2× pixels
+        dpr = collage_img.width / collage_w if collage_w > 0 else 1.0
+
+        # ── Baseline position in the rendered collage ────────────────────────
+        # vb_top = -850, vb_h_render = 1000: baseline (y=0) sits 850 units from top
+        # → baseline_y_px = (850/1000) * glyph_h = 0.85·h
+        _vb_top_abs   = 850
+        baseline_y_px = int(_vb_top_abs / vb_h_render * glyph_h)
+        # sf strictly from the 1000-unit Em Square (same as scale)
+        sf = glyph_h / upem
+
+        # ── Crop individual glyphs from collage, record per-glyph baseline offsets ─
+        # Horizontal: keep the FULL advance-width slice — do NOT tight-crop sides.
+        # The transparent sidebearing space in the image IS the inter-letter gap;
+        # removing it would eliminate the font's designed spacing and cause letters
+        # to touch or overlap when composed.
+        # Vertical: tight-crop to the visible rows only (removes blank top/bottom).
+        glyph_imgs_raw = {}
+        glyph_above_bl = {}
+        glyph_below_bl = {}
+        for ch, (adv_px, h_px, _) in char_svg.items():
+            x0 = int(x_pos[ch] * dpr)
+            x1 = int((x_pos[ch] + adv_px) * dpr)
+            y1 = int(h_px * dpr)
+            crop = collage_img.crop((x0, 0, min(x1, collage_img.width),
+                                     min(y1, collage_img.height)))
+            if dpr != 1.0:
+                crop = crop.resize((adv_px, h_px), Image.LANCZOS)
+            arr = np.array(crop)
+            white = (arr[:, :, 0] > 240) & (arr[:, :, 1] > 240) & (arr[:, :, 2] > 240)
+            arr[white, 3] = 0
+            img_rgba = Image.fromarray(arr)
+            if arr[:, :, 3].max() > 0:
+                # Vertical tight-crop: find first and last rows with visible pixels
+                _row_alpha = arr[:, :, 3].max(axis=1)
+                _vis = np.where(_row_alpha > 0)[0]
+                if len(_vis) > 0:
+                    _yt = int(_vis[0]);  _yb = int(_vis[-1]) + 1
+                    glyph_imgs_raw[ch] = img_rgba.crop((0, _yt, img_rgba.width, _yb))
+                    glyph_above_bl[ch] = max(0, min(baseline_y_px, _yb) - _yt)
+                    glyph_below_bl[ch] = max(0, _yb - baseline_y_px)
+                else:
+                    glyph_imgs_raw[ch] = None
+                    glyph_above_bl[ch] = 0
+                    glyph_below_bl[ch] = 0
+            else:
+                glyph_imgs_raw[ch] = None
+                glyph_above_bl[ch] = 0
+                glyph_below_bl[ch] = 0
+
+        if not any(v is not None for v in glyph_imgs_raw.values()):
+            log(f"  Collage render: all glyphs transparent for {font_name}", "WARN")
+            return None
+
+        # ── Per-character-category scaling (FONT_CHAR_METRICS) ───────────────
+        # Some premium SVG fonts encode all glyphs at the same visual scale
+        # (lowercase 'a' as tall as uppercase 'A').  FONT_CHAR_METRICS stores
+        # measured ratios (generated by measure_premium_fonts.py) so each
+        # category is scaled to its correct proportion relative to cap height.
+        _cat_metrics = FONT_CHAR_METRICS.get(key)
+        if _cat_metrics:
+            _upper_vals = [glyph_above_bl[c] for c in glyph_above_bl
+                           if c.isupper() and glyph_above_bl[c] > 0
+                           and glyph_imgs_raw.get(c) is not None]
+            _cap_h_ref = int(sum(_upper_vals) / len(_upper_vals)) if _upper_vals else 0
+            if _cap_h_ref > 0:
+                for _ch in list(glyph_imgs_raw.keys()):
+                    _gimg = glyph_imgs_raw[_ch]
+                    if _gimg is None or glyph_above_bl.get(_ch, 0) <= 0:
+                        continue
+                    _cat   = _char_category(_ch)
+                    _ratio = _cat_metrics.get(_cat)
+                    if _ratio is None:
+                        continue
+                    _target_above = max(1, int(_cap_h_ref * _ratio))
+                    _cur_above    = glyph_above_bl[_ch]
+                    if _cur_above <= 0:
+                        continue
+                    _sf2 = _target_above / _cur_above
+                    if abs(_sf2 - 1.0) < 0.02:
+                        continue
+                    _new_w = max(1, int(_gimg.width  * _sf2))
+                    _new_h = max(1, int(_gimg.height * _sf2))
+                    glyph_imgs_raw[_ch]  = _gimg.resize((_new_w, _new_h), Image.LANCZOS)
+                    glyph_above_bl[_ch]  = _target_above
+                    glyph_below_bl[_ch]  = max(0, int(glyph_below_bl.get(_ch, 0) * _sf2))
+                    # Scale stored advance proportionally so spacing matches glyph size
+                    if _ch in char_svg:
+                        _adv0, _hp0, _sv0 = char_svg[_ch]
+                        char_svg[_ch] = (max(1, int(_adv0 * _sf2)), max(1, int(_hp0 * _sf2)), _sv0)
+
+        # Line metrics driven purely by the rendered glyphs.
+        max_above = max((v for v in glyph_above_bl.values() if v > 0),
+                        default=int(glyph_h * 0.625))
+        max_below = max((v for v in glyph_below_bl.values() if v > 0),
+                        default=int(glyph_h * 0.1))
+        line_h    = max_above + max_below
+        _tracking = FONT_TRACKING.get(key, 1.0)
+
+        # ── Render outline-only glyphs via PIL with customer colour ───────────
+        # Characters like " " ' that are in the cmap (have outline glyphs) but
+        # have no SVG colour entry.  Render them at cap-height size in the
+        # customer's chosen colour so they match the overall text scheme.
+        if outline_only:
+            try:
+                from PIL import ImageFont as _PIF, Image as _PImg, ImageDraw as _PID
+                _cx = colour_hex or "#ffffff"
+                _r  = int(_cx[1:3], 16) if len(_cx) >= 7 else 255
+                _g  = int(_cx[3:5], 16) if len(_cx) >= 7 else 255
+                _bv = int(_cx[5:7], 16) if len(_cx) >= 7 else 255
+                _pil_sz = max(50, max_above)
+                _pil_f  = None
+                for _fp in [font_path, None]:
+                    try:
+                        _pil_f = _PIF.truetype(_fp, _pil_sz) if _fp else _PIF.load_default()
+                        break
+                    except Exception:
+                        continue
+                if _pil_f:
+                    for _ch in outline_only:
+                        _gn = cmap.get(ord(_ch))
+                        _adv_u = hmtx.get(_gn, (upem // 3, 0))[0] if _gn else upem // 3
+                        _adv_px = max(1, int(_adv_u * sf * _tracking))
+                        _tmp = _PImg.new("RGBA", (max(100, _adv_px * 3), max(100, _pil_sz * 2)), (0, 0, 0, 0))
+                        _PID.Draw(_tmp).text((0, 0), _ch, font=_pil_f, fill=(_r, _g, _bv, 255))
+                        _bb = _tmp.getbbox()
+                        if _bb:
+                            _crop = _tmp.crop(_bb)
+                            glyph_imgs_raw[_ch] = _crop
+                            glyph_above_bl[_ch] = _crop.height
+                            glyph_below_bl[_ch] = 0
+                            char_svg[_ch] = (_adv_px, _pil_sz, None)
+            except Exception:
+                pass
+
+        # Special-char vertical alignment after FONT_CHAR_METRICS scaling.
+        # gy = max_above - above_bl determines paste Y position.
+        #   APOSTROPHE/QUOTE  TOP:      above_bl = max_above
+        #   PERIOD/COMMA      BASELINE: above_bl = glyph_h
+        #   HYPHEN/DASH       CENTRE:   above_bl = glyph_h//2 + max_above//2
+        _TOP_PUNCT      = frozenset(["'", '‘', '’', '"', '“', '”', '`', '´', 'ʼ', 'ʻ', '＇'])
+        _BASELINE_PUNCT = frozenset(['.', ','])
+        _CENTRE_PUNCT   = frozenset(['-', '–', '—'])
+        for _ch in list(glyph_above_bl):
+            _gimg = glyph_imgs_raw.get(_ch)
+            if _gimg is None:
+                continue
+            if _ch in _TOP_PUNCT:
+                glyph_above_bl[_ch] = max_above
+            elif _ch in _BASELINE_PUNCT:
+                glyph_above_bl[_ch] = _gimg.height
+            elif _ch in _CENTRE_PUNCT:
+                glyph_above_bl[_ch] = _gimg.height // 2 + max_above // 2
+
+        # ── Render emoji at cap-height size (separate Chrome pass) ────────────
+        if emoji_fallback:
+            em_font_px = max(20, int(max_above / 0.80))
+            em_div_px  = int(em_font_px * 2.0)
+            em_cols    = {}
+            em_items   = ""
+            em_cx      = 0
+            for _ch in sorted(emoji_fallback):
+                ch_html = ''.join(f'&#x{ord(c):X};' for c in _ch) + '&#xFE0F;'
+                em_items += (
+                    f'<div style="position:absolute;left:{em_cx}px;top:0;'
+                    f'width:{em_div_px}px;height:{em_div_px}px;display:flex;'
+                    f'align-items:center;justify-content:center;'
+                    f'font-family:\'Segoe UI Emoji\',\'Apple Color Emoji\',sans-serif;'
+                    f'font-size:{em_font_px}px;line-height:1">{ch_html}</div>\n'
+                )
+                em_cols[_ch] = em_cx
+                em_cx += em_div_px
+            em_w = em_cx + 5
+            em_h = em_div_px + 5
+            em_html = (
+                f'<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+                f'*{{margin:0;padding:0}}html,body{{background:#ffffff;overflow:hidden}}'
+                f'.c{{position:relative;width:{em_w}px;height:{em_h}px}}'
+                f'</style></head><body><div class="c">{em_items}</div></body></html>'
+            )
+            em_html_path = os.path.join(TEMP_FOLDER, f"emoji_col_{_pid}.html")
+            em_png_path  = os.path.join(TEMP_FOLDER, f"emoji_col_{_pid}.png")
+            with open(em_html_path, "w", encoding="utf-8") as _f:
+                _f.write(em_html)
+            try:
+                if os.path.exists(em_png_path):
+                    os.remove(em_png_path)
+            except Exception:
+                pass
+            cmd2 = [
+                CHROME_EXE, "--headless", "--no-sandbox",
+                "--disable-gpu", "--disable-extensions",
+                "--no-first-run", "--disable-sync",
+                f"--screenshot={em_png_path}",
+                f"--window-size={em_w},{em_h}",
+                "file:///" + em_html_path.replace("\\", "/"),
+            ]
+            try:
+                subprocess.run(cmd2, capture_output=True, timeout=40)
+            except Exception:
+                pass
+            if os.path.exists(em_png_path):
+                try:
+                    em_img = Image.open(em_png_path)
+                    em_img.load()
+                    em_img = em_img.convert("RGBA")
+                    em_dpr = em_img.width / em_w if em_w > 0 else 1.0
+                    for _ch in emoji_fallback:
+                        x0 = int(em_cols[_ch] * em_dpr)
+                        x1 = int((em_cols[_ch] + em_div_px) * em_dpr)
+                        y1 = int(em_div_px * em_dpr)
+                        _crop = em_img.crop((x0, 0, min(x1, em_img.width), min(y1, em_img.height)))
+                        if em_dpr != 1.0:
+                            _crop = _crop.resize((em_div_px, em_div_px), Image.LANCZOS)
+                        _arr = np.array(_crop)
+                        _white = (_arr[:, :, 0] > 248) & (_arr[:, :, 1] > 248) & (_arr[:, :, 2] > 248)
+                        _arr[_white, 3] = 0
+                        _rgba = Image.fromarray(_arr)
+                        _bbox = _rgba.getbbox()
+                        if _bbox and _arr[:, :, 3].max() > 0:
+                            _cropped = _rgba.crop(_bbox)
+                            _em_w = max(1, int(_cropped.width * max_above / _cropped.height))
+                            glyph_imgs_raw[_ch] = _cropped.resize((_em_w, max_above), Image.LANCZOS)
+                            glyph_above_bl[_ch] = max_above
+                            glyph_below_bl[_ch] = 0
+                        else:
+                            glyph_imgs_raw[_ch] = None
+                            glyph_above_bl[_ch] = 0
+                            glyph_below_bl[_ch] = 0
+                except Exception:
+                    pass
+            for _f in (em_html_path, em_png_path):
+                try: os.remove(_f)
+                except Exception: pass
+
+        # ── Compose text lines — uniform sf, hmtx advance, baseline-anchored ─
+        # X advance = hmtx_advance × sf × tracking  (single scale, per-font tracking)
+        # Y paste   = max_above - above_bl[ch]  (aligns all baselines to one row)
+        # Period uses identical sf as every other glyph — no independent shrinking.
+        _tracking = FONT_TRACKING.get(key, 1.0)
+        space_em  = hmtx.get('space', hmtx.get('uni0020', (upem // 3, 0)))[0]
+        space_w   = max(4, int(space_em * sf * _tracking))
+        line_imgs = []
+        for line_text in text_lines:
+            if not line_text.strip():
+                line_imgs.append(None)
+                continue
+            x     = 0
+            parts = []
+            for ch in line_text:
+                gimg = glyph_imgs_raw.get(ch)
+                if ch in char_svg:
+                    gname = cmap.get(ord(ch))
+                    # Use char_svg advance (already in px, already scaled by FONT_CHAR_METRICS)
+                    adv   = max(1, int(char_svg[ch][0] * _tracking))
+                    parts.append((gimg, x, glyph_above_bl.get(ch, max_above)))
+                    x += adv
+                elif ch in emoji_fallback:
+                    adv = max(1, int((gimg.width + 4) * _tracking)) if gimg is not None else space_w
+                    parts.append((gimg, x, glyph_above_bl.get(ch, max_above)))
+                    x += adv
+                else:
+                    x += space_w
+            if x <= 0:
+                line_imgs.append(None)
+                continue
+            _min_w = max(x, max((gx + g.width for g, gx, _ in parts if g is not None), default=x))
+            line_img = Image.new("RGBA", (_min_w, line_h), (0, 0, 0, 0))
+            for gimg, gx, above in parts:
+                if gimg is not None:
+                    gy = max_above - above   # baseline-anchor: align to common baseline row
+                    line_img.paste(gimg, (gx, max(0, gy)), gimg)
+            line_imgs.append(line_img)
+
+        valid = [li for li in line_imgs if li is not None]
+        if not valid:
+            return None
+
+        # Stack lines — use actual max line width to prevent right-edge clipping
+        line_gap   = max(line_h // 3, 40)  # ~33% of cap height between lines
+        n_lines    = len(line_imgs)
+        total_h    = line_h * n_lines + line_gap * max(0, n_lines - 1)
+        max_line_w = max((limg.width for limg in line_imgs if limg is not None), default=canvas_w)
+        result     = Image.new("RGBA", (max_line_w, max(1, total_h)), (0, 0, 0, 0))
+        y = 0
+        for limg in line_imgs:
+            if limg is not None:
+                cx2 = max(0, (max_line_w - limg.width) // 2)
+                result.paste(limg, (cx2, y), limg)
+            y += line_h + line_gap
+
+        bbox = result.getbbox()
+        if not bbox:
+            return None
+        result = result.crop(bbox)
+
+        # Scale to fill ~85% of canvas width — same as the PIL renderer does.
+        avail_w = int(canvas_w * 0.85)
+        if result.width > 0 and result.width != avail_w:
+            ratio   = avail_w / result.width
+            new_h   = max(1, int(result.height * ratio))
+            result  = result.resize((avail_w, new_h), Image.LANCZOS)
+
+        log(f"  Collage render OK for {font_name}: {result.size}", "INFO")
+        return result
+
+    result = _try_collage_render()
+    if result is not None:
+        return result
+
+    log(f"  Collage render failed for {font_name} — falling back to CSS font render", "WARN")
+
+    # ── STRATEGY B: CSS @font-face (single Chrome call — shape only, no SVG colour) ─
+    def _try_html_render():
+        max_chars  = max(len(l) for l in real_lines if l)
+        font_px    = max(80, min(500, int(canvas_w * 0.85 / max(1, max_chars))))
+        line_height = int(font_px * 1.25)
+        total_h     = line_height * len(text_lines) + font_px
+
+        bg = "#00FE00"   # lime-green background for clean keying
+
+        lines_html = "\n".join(
+            f'<div class="tl">{_html.escape(l) if l.strip() else "&nbsp;"}</div>'
+            for l in text_lines
+        )
+
+        import base64 as _b64
+        with open(font_path, "rb") as _fh:
+            _font_b64 = _b64.b64encode(_fh.read()).decode("ascii")
+        fmt      = "opentype" if font_path.lower().endswith(".otf") else "truetype"
+        font_url = f"data:font/{fmt};base64,{_font_b64}"
+
+        html_src = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+html,body{{background:{bg};width:{canvas_w}px}}
+@font-face{{font-family:'PF';src:url('{font_url}') format('{fmt}')}}
+.tl{{font-family:'PF',sans-serif;font-size:{font_px}px;
+     line-height:{line_height}px;text-align:center;
+     width:{canvas_w}px;white-space:pre;overflow:hidden}}
+</style></head><body>
+{lines_html}
+</body></html>"""
+
+        _pid      = os.getpid()
+        html_path = os.path.join(TEMP_FOLDER, f"premium_font_{_pid}.html")
+        png_path  = os.path.join(TEMP_FOLDER, f"premium_font_{_pid}.png")
+
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_src)
+        try:
+            if os.path.exists(png_path):
+                os.remove(png_path)
+        except Exception:
+            pass
+
+        cmd = [
+            CHROME_EXE, "--headless", "--no-sandbox",
+            "--disable-gpu", "--disable-extensions",
+            "--no-first-run", "--disable-sync",
+            f"--screenshot={png_path}",
+            f"--window-size={canvas_w},{max(200, total_h)}",
+            "file:///" + html_path.replace("\\", "/"),
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=30)
+        except Exception:
+            return None
+
+        if not os.path.exists(png_path):
+            return None
+        try:
+            img = Image.open(png_path)
+            img.load()
+            img = img.convert("RGBA")
+        except Exception:
+            return None
+        for _f in (html_path, png_path):
+            try: os.remove(_f)
+            except Exception: pass
+
+        if img.width > canvas_w:
+            scale_f = canvas_w / img.width
+            img = img.resize(
+                (canvas_w, max(1, int(img.height * scale_f))), Image.LANCZOS)
+
+        arr = np.array(img)
+        lime = (arr[:, :, 0] < 30) & (arr[:, :, 1] > 240) & (arr[:, :, 2] < 30)
+        arr[lime, 3] = 0
+
+        if arr[:, :, 3].max() == 0:
+            return None
+
+        result = Image.fromarray(arr)
+        bbox = result.getbbox()
+        if not bbox:
+            return None
+        log(f"  CSS render OK for {font_name}: {result.size} -> bbox {bbox}", "INFO")
+        return result.crop(bbox)
+
+    result = _try_html_render()
+    if result is not None:
+        return result
+
+    log(f"  CSS render also failed for {font_name} — falling back to glyph-by-glyph SVG", "WARN")
+
+    # ── STRATEGY B: glyph-by-glyph SVG render ──────────────────────────────────
+    try:
+        from fontTools.ttLib import TTFont
+    except ImportError:
+        log("fontTools not available — cannot render premium font", "WARN")
+        return None
+
+    try:
+        ft_font     = TTFont(font_path)
+        svg_table   = ft_font.get('SVG ')
+        cmap        = ft_font.getBestCmap()
+        glyph_order = ft_font.getGlyphOrder()
+        upem        = ft_font['head'].unitsPerEm
+        ascender    = ft_font['hhea'].ascent
+        descender   = ft_font['hhea'].descent   # negative number
+        vb_h        = ascender - descender
+        hmtx        = ft_font['hmtx'].metrics
+    except Exception as e:
+        log(f"fontTools load error for {font_name}: {e}", "WARN")
+        return None
+
+    if not svg_table:
+        log(f"No SVG table in {font_name}", "WARN")
+        return None
+
+    # glyph_id → SVG document
+    svg_map = {}
+    for doc in svg_table.docList:
+        for gid in range(doc.startGlyphID, doc.endGlyphID + 1):
+            svg_map[gid] = doc.data
+
+    # Target glyph size
+    max_chars  = max(len(l) for l in real_lines if l)
+    glyph_px   = max(150, min(400, canvas_w // max(1, max_chars)))
+    scale      = glyph_px / vb_h
+    line_h     = max(10, int(vb_h * scale * 1.1))
+    profile_dir = os.path.join(TEMP_FOLDER, "chrome_profile")  # shared — calls are sequential
+
+    def render_glyph_svg(gid):
+        """Render one glyph → RGBA image, or (None, adv_px) on failure."""
+        glyph_name = glyph_order[gid] if gid < len(glyph_order) else None
+        adv_units  = hmtx.get(glyph_name, (upem // 3, 0))[0] if glyph_name else upem // 3
+        adv_px     = max(1, int(adv_units * scale))
+        h_px       = max(1, int(vb_h * scale))
+
+        svg_raw = svg_map.get(gid)
+        if not svg_raw:
+            return None, adv_px
+
+        svg = svg_raw
+        # Fix / add viewBox so Chrome maps the glyph coordinate space correctly
+        vb_attr = f'viewBox="0 {descender} {upem} {vb_h}"'
+        if 'viewBox' in svg:
+            svg = re.sub(r'viewBox="[^"]*"', vb_attr, svg)
+        else:
+            svg = svg.replace('<svg', f'<svg {vb_attr}', 1)
+
+        # Force explicit pixel size — remove any existing width/height first
+        svg = re.sub(r'\s+width="[^"]*"',  '', svg)
+        svg = re.sub(r'\s+height="[^"]*"', '', svg)
+        svg = svg.replace('<svg', f'<svg width="{adv_px}" height="{h_px}"', 1)
+
+        # For shared SVG documents (multiple glyphs), hide all except this one
+        # by injecting a CSS rule that shows only #glyph{gid}
+        if svg_map.get(gid) and svg_table.docList:
+            for doc in svg_table.docList:
+                if doc.startGlyphID <= gid <= doc.endGlyphID and \
+                        doc.startGlyphID != doc.endGlyphID:
+                    # Shared document — CSS-hide all sibling glyphs
+                    hide_css = (
+                        f'<style>g{{display:none}} '
+                        f'#glyph{gid},#glyph.{gid}{{display:inline}}</style>'
+                    )
+                    svg = svg.replace('<svg', '<svg', 1)  # no-op anchor
+                    svg = re.sub(r'(<svg[^>]*>)', r'\1' + hide_css, svg, count=1)
+                    break
+
+        svg_path = os.path.join(TEMP_FOLDER, f"glyph_{gid}.svg")
+        png_path = os.path.join(TEMP_FOLDER, f"glyph_{gid}.png")
+
+        try:
+            if os.path.exists(png_path):
+                os.remove(png_path)
+        except Exception:
+            pass
+
+        with open(svg_path, "w", encoding="utf-8") as f:
+            f.write(svg)
+
+        cmd = [
+            CHROME_EXE, "--headless", "--no-sandbox",
+            "--disable-gpu", "--disable-extensions",
+            "--no-first-run", "--disable-sync",
+            f"--user-data-dir={profile_dir}",
+            f"--screenshot={png_path}",
+            f"--window-size={adv_px},{h_px}",
+            "file:///" + svg_path.replace("\\", "/"),
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=20)
+        except Exception as e:
+            log(f"  Chrome error glyph {gid}: {e}", "WARN")
+            return None, adv_px
+
+        if not os.path.exists(png_path):
+            return None, adv_px
+
+        try:
+            img = Image.open(png_path)
+            img.load()
+            img = img.convert("RGBA")
+        except Exception:
+            return None, adv_px
+        for _f in (svg_path, png_path):
+            try: os.remove(_f)
+            except Exception: pass
+
+        # Handle HiDPI — resize to expected dimensions
+        if img.width != adv_px or img.height != h_px:
+            img = img.resize((adv_px, h_px), Image.LANCZOS)
+
+        # Remove white background
+        arr = np.array(img)
+        white = (arr[:, :, 0] > 240) & (arr[:, :, 1] > 240) & (arr[:, :, 2] > 240)
+        arr[white, 3] = 0
+
+        if arr[:, :, 3].max() == 0:
+            return None, adv_px  # Glyph rendered no visible pixels
+
+        return Image.fromarray(arr), adv_px
+
+    # Build one image per line
+    line_images = []
+    for line_text in text_lines:
+        if not line_text.strip():
+            line_images.append(None)
+            continue
+
+        x     = 0
+        parts = []
+        for ch in line_text:
+            cp         = ord(ch)
+            glyph_name = cmap.get(cp)
+            if not glyph_name:
+                adv_px = int((upem // 3) * scale)
+                parts.append((None, x, adv_px))
+                x += adv_px
+                continue
+            try:
+                gid = glyph_order.index(glyph_name)
+            except ValueError:
+                adv_px = max(1, int(hmtx.get(glyph_name, (upem // 3, 0))[0] * scale))
+                parts.append((None, x, adv_px))
+                x += adv_px
+                continue
+            glyph_img, adv_px = render_glyph_svg(gid)
+            parts.append((glyph_img, x, adv_px))
+            x += adv_px
+
+        if x <= 0:
+            line_images.append(None)
+            continue
+
+        line_img = Image.new("RGBA", (x, line_h), (0, 0, 0, 0))
+        for glyph_img, gx, adv_px in parts:
+            if glyph_img is None:
+                continue
+            gh      = min(glyph_img.height, line_h)
+            paste_y = max(0, (line_h - gh) // 2)
+            clip_w  = min(glyph_img.width, line_img.width - gx)
+            if clip_w > 0:
+                clip = glyph_img.crop((0, 0, clip_w, gh))
+                line_img.paste(clip, (gx, paste_y), clip)
+
+        line_images.append(line_img)
+
+    valid = [li for li in line_images if li is not None]
+    if not valid:
+        log(f"  Glyph-SVG renderer: no visible glyphs for {font_name}", "WARN")
+        return None
+
+    # Assemble lines on canvas
+    line_gap = max(line_h // 3, 40)  # ~33% of cap height between lines
+    n_lines  = len(line_images)
+    total_h  = line_h * n_lines + line_gap * max(0, n_lines - 1)
+    result   = Image.new("RGBA", (canvas_w, max(1, total_h)), (0, 0, 0, 0))
+    y        = 0
+    for limg in line_images:
+        if limg is not None:
+            cx = max(0, (canvas_w - limg.width) // 2)
+            result.paste(limg, (cx, y), limg)
+        y += line_h + line_gap
+
+    bbox = result.getbbox()
+    if not bbox:
+        log(f"  Glyph-SVG renderer: final result transparent for {font_name}", "WARN")
+        return None
+
+    return result.crop(bbox)
+
+def build_text_layer(text_lines, font_name, colour_hex, w, h):
+    if not text_lines:
+        return Image.new("RGBA", (1, 1), (0, 0, 0, 0)), 0, 0
+
+    # Premium fonts: try Chrome first (Strategy A renders SVG glyph patterns —
+    # mermaid scales, camo, football texture etc.).  If Chrome fails (font has no
+    # SVG table) we fall through to PIL with black fill.
+    # SVG-only fonts (PIL renders blank) also route through Chrome, passing None
+    # for colour so the font's own embedded colours are used.
+    if _is_svg_only_font(font_name) or _is_premium_font_name(font_name):
+        chrome_col = None if _is_svg_only_font(font_name) else colour_hex
+        chrome_img = build_text_layer_chrome(text_lines, font_name, chrome_col, w)
+        if chrome_img is not None:
+            # Scale to fill canvas width (85 % margin) — same target the PIL
+            # binary-search path uses.  Chrome renders at glyph_h resolution so
+            # upscaling here stays sharp.
+            avail_w = int(w * 0.85)
+            if chrome_img.width > 0 and chrome_img.width != avail_w:
+                _s = avail_w / chrome_img.width
+                chrome_img = chrome_img.resize(
+                    (avail_w, max(1, int(chrome_img.height * _s))),
+                    Image.LANCZOS)
+            left = max(0, (w - chrome_img.width) // 2)
+            return chrome_img, 0, left
+        # Chrome failed (no SVG table) → fall through to PIL
+
+    is_premium = _is_premium_font_name(font_name)
+    r, g, b    = (0, 0, 0) if is_premium else hex_to_rgb(colour_hex)
+    avail_w    = int(w * 0.90)
+    real_lines = [l for l in text_lines if l.strip()]
+    if not real_lines:
+        return Image.new("RGBA", (1, 1), (0, 0, 0, 0)), 0, 0
+
+    # Per-font tracking multiplier (same map used by Chrome SVG renderer)
+    _font_key = _resolve_font_key(font_name) or ""
+    _tracking  = FONT_TRACKING.get(_font_key, 1.0)
+
+    # ── Load fontTools metrics (head + hmtx) ─────────────────────────────────
+    font_path = FONT_INDEX.get(_font_key)
+    ft_hmtx   = None
+    ft_cmap   = None
+    ft_upem   = None
+    if font_path:
+        try:
+            from fontTools.ttLib import TTFont as _TTFont
+            _ft    = _TTFont(font_path)
+            ft_upem = _ft['head'].unitsPerEm          # unitsPerEm from head table
+            ft_hmtx = _ft['hmtx'].metrics             # glyph_name → (advance, lsb)
+            ft_cmap = _ft.getBestCmap()               # codepoint → glyph_name
+        except Exception:
+            ft_hmtx = ft_cmap = ft_upem = None
+
+    def _line_width_px(line, font_size):
+        """Width = Σ advance_width × (font_size / unitsPerEm) × tracking.
+        Never uses textbbox() or getmask() — purely metric-based."""
+        if ft_hmtx and ft_cmap and ft_upem:
+            sf    = font_size / ft_upem * _tracking
+            total = 0
+            for ch in line:
+                gname = ft_cmap.get(ord(ch))
+                adv   = ft_hmtx.get(gname, (ft_upem // 3, 0))[0] if gname else ft_upem // 3
+                total += int(adv * sf)
+            return total
+        # Fallback only when fontTools is unavailable (textbbox for sizing, not X-advance)
+        scratch = Image.new("RGBA", (1, 1))
+        bb = ImageDraw.Draw(scratch).textbbox((0, 0), line, font=get_font(font_name, font_size))
+        return bb[2] - bb[0]
+
+    # ── Binary-search for the largest font size that fits avail_w ────────────
+    lo, hi, best = 20, min(int(h * 0.25), h // max(1, len(real_lines))), 60
+    while lo <= hi:
+        mid    = (lo + hi) // 2
+        widest = max(_line_width_px(l, mid) for l in real_lines)
+        if widest <= avail_w:
+            best = mid
+            lo   = mid + 1
+        else:
+            hi   = mid - 1
+
+    font         = get_font(font_name, best)
+    # scale_factor = font_size / unitsPerEm  (per user spec)
+    scale_factor = (best / ft_upem) if ft_upem else None
+
+    # Line height from textbbox — height measurement only, not used for X positioning
+    scratch = Image.new("RGBA", (1, 1))
+    bb0     = ImageDraw.Draw(scratch).textbbox((0, 0), real_lines[0], font=font)
+    line_h  = int((bb0[3] - bb0[1]) * 1.4)
+    pad     = line_h
+
+    tmp_w = w + pad * 2
+    tmp_h = line_h * len(text_lines) + pad * 2
+    img   = Image.new("RGBA", (tmp_w, tmp_h), (0, 0, 0, 0))
+    d2    = ImageDraw.Draw(img)
+    baseline_y = pad + int(line_h * 0.75)   # anchor='ls' baseline row
+
+    has_emoji = any(ord(c) > 127 for line in text_lines for c in line)
+
+    for line in text_lines:
+        if line.strip():
+            if ft_hmtx and ft_cmap and ft_upem and scale_factor:
+                # ── Metric-based cursor positioning ───────────────────────────
+                # advance_width × scale_factor × tracking — no textbbox/getmask
+                # for X advance. Period stays its natural size; 'W' stays wide.
+                line_px = sum(
+                    int(ft_hmtx.get(ft_cmap.get(ord(ch)), (ft_upem // 3, 0))[0]
+                        * scale_factor * _tracking)
+                    for ch in line
+                )
+                current_x = max(pad, pad + (w - line_px) // 2)
+                for ch in line:
+                    gname = ft_cmap.get(ord(ch))
+                    adv_u = ft_hmtx.get(gname, (ft_upem // 3, 0))[0] if gname else ft_upem // 3
+                    # anchor='ls': current_x = left of advance cell, baseline_y = baseline
+                    d2.text((current_x, baseline_y), ch, font=font,
+                            fill=(r, g, b, 255), anchor='ls')
+                    current_x += int(adv_u * scale_factor * _tracking)
+            else:
+                # Emoji fallback or no fontTools — textbbox for line centering only
+                if has_emoji and PILMOJI_AVAILABLE:
+                    bb = ImageDraw.Draw(Image.new("RGBA", (1, 1))).textbbox(
+                        (0, 0), line, font=font)
+                    x = max(pad, pad + (w - (bb[2] - bb[0])) // 2)
+                    with Pilmoji(img) as pil:
+                        pil.text((x, baseline_y - int(line_h * 0.75)),
+                                 line, fill=(r, g, b, 255), font=font)
+                else:
+                    bb = d2.textbbox((0, 0), line, font=font)
+                    x  = max(pad, pad + (w - (bb[2] - bb[0])) // 2)
+                    d2.text((x, baseline_y), line, font=font,
+                            fill=(r, g, b, 255), anchor='ls')
+        baseline_y += line_h
+
+    bbox = img.getbbox()
+    if bbox:
+        margin = max(10, line_h // 6)
+        img = img.crop((max(0, bbox[0] - margin), max(0, bbox[1] - margin),
+                        min(tmp_w, bbox[2] + margin), min(tmp_h, bbox[3] + margin)))
+
+    left = max(0, (w - img.width) // 2)
+    return img, 0, left
+
+# ─── SKU COLOUR / SIZE PARSING ───────────────────────────────────────────────
+# Maps SKU colour codes → readable colour names (matches owner's label format)
+COLOUR_MAP = {
+    "Blk": "Black",  "Wht": "White",  "Nvy": "Navy",   "Red": "Red",
+    "Pnk": "Pink",   "Gry": "Grey",   "Blu": "Blue",   "Grn": "Green",
+    "Ylw": "Yellow", "Fus": "Fuchsia","Pur": "Purple",  "Org": "Orange",
+    "Bur": "Burgundy","Nat": "Natural","Lav": "Lavender","RBlu":"Royal Blue",
+    "SBlu":"Sky Blue","Camo":"Camo",   "TD": "Tie Dye",  "GryM":"Grey Marl",
+    "Ivry":"Ivory",   "BPnk":"Baby Pink",
+}
+
+def parse_sku_colour_size(sku):
+    """
+    Extract colour and size from SKU for use in layer labels.
+    e.g. MenTee_WhtXL   -> ("White", "XL")
+         KidsTee_Blk911 -> ("Black", "9-11")
+         AdultPoloTee_RBluM -> ("Royal Blue", "M")
+    Returns (colour_str, size_str) — either may be empty string.
+    """
+    if not sku:
+        return "", ""
+    # Split on underscore — last segment has colour+size
+    parts = sku.split("_")
+    if len(parts) < 2:
+        return "", ""
+    last = parts[-1]
+
+    # Try to match colour codes (longest match first)
+    colour_str = ""
+    remainder  = last
+    for code in sorted(COLOUR_MAP.keys(), key=len, reverse=True):
+        if last.startswith(code):
+            colour_str = COLOUR_MAP[code]
+            remainder  = last[len(code):]
+            break
+
+    # Size: whatever remains after the colour code
+    # Normalise age sizes: 911 → 9-11, 78 → 7-8, 1213 → 12-13 etc.
+    size_raw = remainder.strip()
+    size_str = size_raw
+    if size_raw.isdigit() and len(size_raw) >= 2:
+        mid = len(size_raw) // 2
+        size_str = size_raw[:mid] + "-" + size_raw[mid:]
+
+    return colour_str, size_str
+
+
+def make_zone_label(zone_key, sku, use_sku_detail=True):
+    """
+    Build the layer label string.
+    - use_sku_detail=True  → "Front - White XL"   (different designs per size)
+    - use_sku_detail=False → "front"               (identical designs)
+    """
+    zone_display = zone_key.title()   # "front" → "Front"
+    if not use_sku_detail:
+        return zone_display
+    colour, size = parse_sku_colour_size(sku)
+    parts = [zone_display]
+    if colour:
+        parts.append(colour)
+    if size:
+        parts.append(size)
+    return " - ".join(parts)   # "Front - White XL"
+
+
+
+# Maps SKU colour codes -> approximate RGB of the garment
+# Used to detect if the image background matches the garment colour
+GARMENT_RGB = {
+    "Blk":  (20,  20,  20),
+    "Wht":  (255, 255, 255),
+    "Nvy":  (31,  40,  80),
+    "Red":  (200, 30,  30),
+    "Pnk":  (255, 150, 180),
+    "BPnk": (255, 182, 193),
+    "Gry":  (150, 150, 150),
+    "GryM": (160, 160, 160),
+    "Blu":  (30,  100, 200),
+    "RBlu": (65,  105, 225),
+    "SBlu": (135, 206, 235),
+    "Grn":  (34,  139, 34),
+    "Ylw":  (255, 220, 0),
+    "Fus":  (255, 0,   144),
+    "Pur":  (128, 0,   128),
+    "Org":  (255, 140, 0),
+    "Bur":  (128, 0,   32),
+    "Nat":  (245, 222, 179),
+    "Lav":  (230, 190, 255),
+    "Ivry": (255, 255, 240),
+}
+
+def get_garment_rgb(sku):
+    if not sku:
+        return None
+    parts = sku.split("_")
+    if len(parts) < 2:
+        return None
+    last = parts[-1]
+    for code in sorted(GARMENT_RGB.keys(), key=len, reverse=True):
+        if last.startswith(code):
+            return GARMENT_RGB[code]
+    return None
+
+def _is_light_colour(rgb):
+    """True if the garment is a light colour (white, ivory, yellow, light pink etc.)"""
+    r, g, b = rgb
+    brightness = (r * 299 + g * 587 + b * 114) / 1000
+    return brightness > 160
+
+def image_bg_matches_garment(img_rgba, garment_rgb, tolerance=40):
+    """
+    Returns True when edges are solid-background AND interior check passes.
+
+    Interior check only applies for LIGHT garments (white, ivory, yellow etc.):
+      - Light garment: if 25%+ of interior also matches garment colour, it's
+        complex artwork (e.g. poster with white smoke/mist) — skip removal.
+      - Dark garment (black, navy etc.): skip interior check entirely.
+        Dark backgrounds naturally fill the whole canvas; rembg handles them cleanly.
+    """
+    w, h = img_rgba.size
+    if w < 20 or h < 20:
+        return False
+    strip = 5
+    arr = img_rgba.load()
+    gr, gg, gb = garment_rgb
+
+    def matches(px):
+        return abs(px[0]-gr) <= tolerance and abs(px[1]-gg) <= tolerance and abs(px[2]-gb) <= tolerance
+
+    # --- Edge sample (95% must match garment colour) ---
+    edge_px = []
+    for x in range(0, w, max(1, w // 100)):
+        for y in range(strip):
+            edge_px.append(arr[x, y])
+            edge_px.append(arr[x, h - 1 - y])
+    for y in range(0, h, max(1, h // 100)):
+        for x in range(strip):
+            edge_px.append(arr[x, y])
+            edge_px.append(arr[w - 1 - x, y])
+    if not edge_px:
+        return False
+    edge_match = sum(1 for px in edge_px if matches(px)) / len(edge_px)
+    if edge_match < 0.95:
+        return False
+
+    # --- Interior check — only for light garments ---
+    if _is_light_colour(garment_rgb):
+        bx0, by0 = int(w * 0.1), int(h * 0.1)
+        bx1, by1 = int(w * 0.9), int(h * 0.9)
+        interior_px = []
+        step_x = max(1, (bx1 - bx0) // 50)
+        step_y = max(1, (by1 - by0) // 50)
+        for x in range(bx0, bx1, step_x):
+            for y in range(by0, by1, step_y):
+                interior_px.append(arr[x, y])
+        if interior_px:
+            interior_match = sum(1 for px in interior_px if matches(px)) / len(interior_px)
+            # 80%+ interior matches → almost entirely background colour, no real design
+            # visible (e.g. Kingdom poster with white smoke/mist throughout).
+            # Badges/logos with white sections inside score 50-65% — still remove those.
+            if interior_match >= 0.80:
+                return False
+
+    return True
+
+def remove_background_colourkey(img_rgba, garment_rgb, tolerance=40):
+    """
+    Fast colour-key removal: replace every pixel close to garment_rgb with transparent.
+    Works perfectly for flat graphic designs / logos on solid-colour backgrounds.
+    Much more accurate than rembg for non-photographic images.
+    """
+    import numpy as np
+    arr = np.array(img_rgba, dtype=np.int32)
+    gr, gg, gb = garment_rgb
+    # Distance from each pixel to garment colour
+    diff = (np.abs(arr[:,:,0] - gr) <= tolerance) & \
+           (np.abs(arr[:,:,1] - gg) <= tolerance) & \
+           (np.abs(arr[:,:,2] - gb) <= tolerance)
+    result = arr.copy().astype(np.uint8)
+    result[diff, 3] = 0   # make matching pixels transparent
+    return Image.fromarray(result, 'RGBA')
+
+def remove_background(img_rgba, garment_rgb=None):
+    """
+    For graphic designs on solid backgrounds → fast colour-key removal.
+    For photos (light garments) → rembg AI removal.
+    """
+    if garment_rgb and not _is_light_colour(garment_rgb):
+        # Dark garment (black, navy etc.) — always use colour-key, not rembg
+        # rembg destroys dark graphic designs; colour-key is precise
+        return remove_background_colourkey(img_rgba, garment_rgb)
+
+    # Light garment — use rembg for photo subjects
+    if not REMBG_AVAILABLE:
+        log("rembg not installed - falling back to colour-key removal", "WARN")
+        if garment_rgb:
+            return remove_background_colourkey(img_rgba, garment_rgb)
+        return img_rgba
+    try:
+        result = rembg_remove(img_rgba)
+        # Validate rembg output: if fewer than 15% of pixels are visible it
+        # destroyed a flat graphic/logo — fall back to colour-key removal instead
+        import numpy as _np
+        alpha = _np.array(result)[:, :, 3]
+        visible_pct = (alpha > 10).sum() / max(1, alpha.size)
+        if visible_pct < 0.15:
+            log(f"  rembg left only {visible_pct*100:.1f}% visible — flat graphic detected, switching to colour-key", "WARN")
+            if garment_rgb:
+                return remove_background_colourkey(img_rgba, garment_rgb)
+        return result
+    except Exception as e:
+        log(f"rembg failed: {e} — falling back to colour-key", "WARN")
+        if garment_rgb:
+            return remove_background_colourkey(img_rgba, garment_rgb)
+        return img_rgba
+
+def build_label_layer(label_text):
+    """Small black label overlay for top-left corner of zone."""
+    font_size = max(20, cm_to_px(0.5))
+    try:
+        f = ImageFont.truetype("arialbd.ttf", font_size)
+    except:
+        f = ImageFont.load_default()
+    # Measure actual bounding box — bb[0/1] may be non-zero (font descenders)
+    tmp = Image.new("RGBA", (1, 1))
+    bb  = ImageDraw.Draw(tmp).textbbox((0, 0), label_text.upper(), font=f)
+    pad = 6
+    tw  = bb[2] - bb[0] + pad * 2
+    th  = bb[3] - bb[1] + pad * 2
+    img = Image.new("RGBA", (max(1, tw), max(1, th)), (0, 0, 0, 0))
+    # Offset by bb[0/1] so text is never clipped
+    ImageDraw.Draw(img).text((pad - bb[0], pad - bb[1]), label_text.upper(), font=f, fill=(0, 0, 0, 255))
+    return img
+
+# ─── ZONE BUILDER ─────────────────────────────────────────────────────────────
+
+def build_zones(row, product):
+    preview_map = {
+        "front":  row.get("FrontPreviewImage")  or "",
+        "back":   row.get("BackPreviewImage")   or "",
+        "sleeve": row.get("SleevePreviewImage") or "",
+        "pocket": row.get("PocketPreviewImage") or "",
+    }
+
+    sku = row.get("SKU") or ""
+
+    def make_zone(label, zone_key, img_filename=None, text_lines=None, font=None, colour=None):
+        w, h = get_dims(product, zone_key)
+        return {
+            "label":        label,
+            "zone_key":     zone_key,
+            "w":            w,
+            "h":            h,
+            "img_path":     find_image(img_filename) if img_filename else None,
+            "img_filename": img_filename or "",
+            "text_lines":   text_lines or [],
+            "font":         font   or "",
+            "colour":       colour or "#ffffff",
+            "preview_url":  preview_map.get(zone_key, ""),
+            "sku":          sku,
+        }
+
+    zones = []
+
+    # Per-zone fonts and colours
+    # Premium fonts have built-in colour/texture — customer colour does not apply
+    front_font   = parse_font(row.get("FrontFonts")   or "")
+    front_colour = parse_colour(row.get("FrontColours") or "")
+    back_font    = parse_font(row.get("BackFonts")    or "") or front_font
+    back_colour  = parse_colour(row.get("BackColours") or "") or front_colour
+    pocket_font  = parse_font(row.get("PocketFonts")  or "") or front_font
+    pocket_colour= parse_colour(row.get("PocketColours") or "") or front_colour
+    sleeve_font  = parse_font(row.get("SleeveFonts")  or "") or front_font
+    sleeve_colour= parse_colour(row.get("SleeveColours") or "") or front_colour
+
+    # FRONT — up to 5 images (front first so it appears at top of canvas)
+    front_imgs = parse_image_json(row.get("FrontImageJSON") or "")
+    front_text = parse_texts(row.get("FrontText") or "")
+    front_img  = row.get("FrontImage") or ""
+    if front_imgs:
+        for i, fname in enumerate(front_imgs):
+            label = "front" if len(front_imgs) == 1 else f"front {i+1}"
+            zones.append(make_zone(label, "front", fname, front_text if i == 0 else [], front_font, front_colour))
+    elif front_img:
+        zones.append(make_zone("front", "front", front_img, front_text, front_font, front_colour))
+    elif front_text:
+        zones.append(make_zone("front", "front", text_lines=front_text, font=front_font, colour=front_colour))
+
+    # BACK
+    back_imgs = parse_image_json(row.get("BackImageJSON") or "")
+    back_text = parse_texts(row.get("BackText") or "")
+    back_img  = row.get("BackImage") or ""
+    if back_imgs:
+        zones.append(make_zone("back", "back", back_imgs[0], back_text, back_font, back_colour))
+    elif back_img:
+        zones.append(make_zone("back", "back", back_img, back_text, back_font, back_colour))
+    elif back_text:
+        zones.append(make_zone("back", "back", text_lines=back_text, font=back_font, colour=back_colour))
+
+    # POCKET — pocket left + right if 2 images
+    pocket_imgs = parse_image_json(row.get("PocketImageJSON") or "")
+    pocket_text = parse_texts(row.get("PocketText") or "")
+    pocket_img  = row.get("PocketImage") or ""
+    if len(pocket_imgs) >= 2:
+        zones.append(make_zone("pocket left",  "pocket", pocket_imgs[0], font=pocket_font, colour=pocket_colour))
+        zones.append(make_zone("pocket right", "pocket", pocket_imgs[1], font=pocket_font, colour=pocket_colour))
+    elif len(pocket_imgs) == 1:
+        zones.append(make_zone("pocket", "pocket", pocket_imgs[0], pocket_text, pocket_font, pocket_colour))
+    elif pocket_img:
+        zones.append(make_zone("pocket", "pocket", pocket_img, pocket_text, pocket_font, pocket_colour))
+    elif pocket_text:
+        zones.append(make_zone("pocket", "pocket", text_lines=pocket_text, font=pocket_font, colour=pocket_colour))
+
+    # SLEEVE
+    sleeve_imgs = parse_image_json(row.get("SleeveImageJSON") or "")
+    sleeve_text = parse_texts(row.get("SleeveText") or "")
+    sleeve_img  = row.get("SleeveImage") or ""
+    if sleeve_imgs:
+        zones.append(make_zone("sleeve", "sleeve", sleeve_imgs[0], sleeve_text, sleeve_font, sleeve_colour))
+    elif sleeve_img:
+        zones.append(make_zone("sleeve", "sleeve", sleeve_img, sleeve_text, sleeve_font, sleeve_colour))
+    elif sleeve_text:
+        zones.append(make_zone("sleeve", "sleeve", text_lines=sleeve_text, font=sleeve_font, colour=sleeve_colour))
+
+    return zones
+
+# ─── PSD BUILDER ──────────────────────────────────────────────────────────────
+
+def build_psd_for_order(order_id, row, out_path, no_bg_remove=False):
+    sku      = row.get("SKU") or ""
+    product  = detect_product(sku)
+    zones    = build_zones(row, product)
+    quantity = max(1, int(row.get("Quantity") or 1))
+
+    if not zones:
+        return False, "No zones found — no image or text data"
+
+    PADDING  = cm_to_px(1)    # 1 cm border around whole canvas
+    GAP      = cm_to_px(0.5)  # gap between different zones (front/back/sleeve)
+    QTY_GAP  = cm_to_px(1.0)  # 1 cm gap between quantity copies (for cutting)
+
+    # Label sits in its own small strip above each zone (not on the image)
+    lbl_sample = build_label_layer("front")
+    LABEL_H    = lbl_sample.height + cm_to_px(2.0)   # label text height + 2cm gap below it
+
+    TEXT_GAP = cm_to_px(0.3)
+    max_zw   = max(z["w"] for z in zones)
+    canvas_w = PADDING + max_zw + PADDING
+
+    # First pass: pre-build all layers so we know actual content heights
+    for zone in zones:
+        zw, zh = zone["w"], zone["h"]
+        zone["_img"] = zone["_it"] = zone["_il"] = None
+        if zone["img_path"]:
+            zone["_img"], zone["_it"], zone["_il"] = build_image_layer(zone["img_path"], zw, zh, sku=sku, no_bg_remove=no_bg_remove)
+        elif zone["img_filename"]:
+            log(f"    WARNING image not found: {zone['img_filename']}", "WARN")
+
+        zone["_txt"] = zone["_tt"] = zone["_tl"] = None
+        if zone["text_lines"]:
+            zone["_txt"], zone["_tt"], zone["_tl"] = build_text_layer(
+                zone["text_lines"], zone["font"], zone["colour"], zw, zh)
+
+        zone["_prev"] = zone["_pnw"] = zone["_pnh"] = None
+        if zone.get("preview_url"):
+            pi = download_preview(zone["preview_url"])
+            if pi:
+                ratio = min(zw / pi.width, zh / pi.height)
+                pnw = max(1, int(pi.width  * ratio))
+                pnh = max(1, int(pi.height * ratio))
+                zone["_prev"] = pi.resize((pnw, pnh), Image.LANCZOS)
+                zone["_pnw"]  = pnw
+                zone["_pnh"]  = pnh
+
+        img_h    = zone["_img"].height if zone["_img"] else 0
+        txt_h    = zone["_txt"].height if zone["_txt"] else 0
+        raw_h    = txt_h + (TEXT_GAP + img_h if txt_h and img_h else img_h)
+        # Always use actual content size — no spec_h padding.
+        # Canvas adapts to content; printing team cuts by zone label.
+        content_h = raw_h if raw_h > 0 else cm_to_px(1)
+        # Per-copy spacing: use raw_h so qty repeats don't have huge gaps
+        repeat_h  = raw_h if raw_h > 0 else content_h
+        zone["_txt_v_offset"] = 0   # no extra centring — 1cm gap from label is enough
+        zone["_txt_h"]    = txt_h
+        zone["_img_h"]    = img_h
+        zone["_content_h"] = content_h
+        zone["_repeat_h"]  = repeat_h
+
+    # ── Estimate bytes per copy and batch copies into ≤2 GB files ────────────
+    MAX_FILE_BYTES  = 2 * 1024 ** 3
+    content_block_h = (sum(LABEL_H + z["_content_h"] for z in zones)
+                       + GAP * (len(zones) - 1))
+    canvas_h        = PADDING + content_block_h + PADDING  # single-copy canvas height
+
+    bytes_per_copy  = canvas_w * content_block_h * 5       # composite (5 CMYK channels)
+    for zone in zones:
+        for pil in (zone["_img"], zone["_txt"], zone["_prev"]):
+            if pil:
+                bytes_per_copy += pil.width * pil.height * 5
+
+    batches:   list = []
+    cur_batch: list = []
+    cur_bytes       = 0
+    for copy_idx in range(quantity):
+        if cur_batch and cur_bytes + bytes_per_copy > MAX_FILE_BYTES:
+            batches.append(cur_batch)
+            cur_batch = [copy_idx]
+            cur_bytes = bytes_per_copy
+        else:
+            cur_batch.append(copy_idx)
+            cur_bytes += bytes_per_copy
+    if cur_batch:
+        batches.append(cur_batch)
+
+    total_files   = len(batches)
+    base_path     = out_path[:-4] if out_path.lower().endswith('.psd') else out_path
+    written_paths = []
+
+    for file_idx, batch_copies in enumerate(batches):
+        n         = len(batch_copies)
+        batch_h   = PADDING + n * content_block_h + (n - 1) * QTY_GAP + PADDING
+        file_path = (f"{base_path}_{file_idx + 1}of{total_files}.psd"
+                     if total_files > 1 else out_path)
+
+        all_layers = []
+        y_base     = PADDING
+
+        for copy_idx in batch_copies:
+            y_cursor = y_base
+
+            for zone_idx, zone in enumerate(zones):
+                zw            = zone["w"]
+                x_left        = PADDING + (max_zw - zw) // 2
+                display_label = zone.get("display_label") or zone["label"]
+
+                lbl = build_label_layer(display_label)
+                all_layers.append({
+                    "name":    f"{display_label} label",
+                    "image":   lbl,
+                    "top":     y_cursor,
+                    "left":    x_left,
+                    "opacity": 255,
+                    "visible": True,
+                })
+
+                content_start = y_cursor + LABEL_H
+                img_pil   = zone["_img"];  it = zone["_it"];  il = zone["_il"]
+                txt_pil   = zone["_txt"];  tt = zone["_tt"];  tl = zone["_tl"]
+                prev_img  = zone["_prev"]; pnw = zone["_pnw"]; pnh = zone["_pnh"]
+                txt_h     = zone["_txt_h"]
+                content_h = zone["_content_h"]
+                v_off     = zone.get("_txt_v_offset", 0)
+
+                if txt_pil:
+                    _tl_dict = {
+                        "name":    f"{display_label} CustomerText",
+                        "image":   txt_pil,
+                        "top":     content_start + v_off + tt,
+                        "left":    x_left + tl,
+                        "opacity": 255,
+                        "visible": True,
+                    }
+                    if EDITABLE_TEXT_AVAILABLE and zone.get("text_lines"):
+                        _ps_font = resolve_ps_font_name(zone.get("font", "arial"))
+                        _r, _g, _b = hex_to_rgb(zone.get("colour", "#ffffff"))
+                        _tl_dict["_text_blocks"] = build_editable_text_tagged_blocks(
+                            text="\n".join(zone["text_lines"]),
+                            font_name=_ps_font,
+                            font_size_px=txt_pil.height,
+                            r=_r, g=_g, b=_b,
+                            px_per_cm=PX_PER_CM,
+                            layer_left=x_left + tl,
+                            layer_top=content_start + v_off + tt,
+                            layer_w=txt_pil.width,
+                            layer_h=txt_pil.height,
+                        )
+                    all_layers.append(_tl_dict)
+
+                if img_pil:
+                    img_top = content_start + txt_h + (TEXT_GAP if txt_pil else 0) + it
+                    all_layers.append({
+                        "name":    f"{display_label} CustomerImage",
+                        "image":   img_pil,
+                        "top":     img_top,
+                        "left":    x_left + il,
+                        "opacity": 255,
+                        "visible": True,
+                    })
+
+                if prev_img:
+                    all_layers.append({
+                        "name":    f"{display_label} Preview Reference",
+                        "image":   prev_img,
+                        "top":     content_start + (content_h - pnh) // 2,
+                        "left":    x_left + (zw - pnw) // 2,
+                        "opacity": 255,
+                        "visible": False,
+                    })
+
+                y_cursor += LABEL_H + content_h
+                if zone_idx < len(zones) - 1:
+                    y_cursor += GAP
+
+            y_base += content_block_h + QTY_GAP
+
+        actual = write_psd(file_path, canvas_w, batch_h, all_layers)
+        if actual and os.path.isfile(actual):
+            written_paths.append(actual)
+
+    if not written_paths:
+        return False, "PSD file not written"
+
+    total_mb   = sum(os.path.getsize(p) for p in written_paths) / (1024 * 1024)
+    zone_names = [z["label"] for z in zones]
+    return True, f"{total_mb:.1f} MB total | {len(written_paths)} file(s) | zones: {zone_names}"
+
+
+def rows_have_same_design(rows):
+    if len(rows) <= 1:
+        return True
+    def sig(row):
+        return (
+            (row.get("FrontText") or "").strip(),
+            (row.get("FrontImageJSON") or "").strip(),
+            (row.get("FrontImage") or "").strip(),
+            (row.get("FrontFonts") or "").strip(),
+            (row.get("FrontColours") or "").strip(),
+        )
+    first = sig(rows[0])
+    return all(sig(r) == first for r in rows)
+
+
+def build_merged_psd_for_order_group(order_id, rows, out_path, no_bg_remove=False):
+    """
+    Builds one merged PSD for an order that has multiple items (rows).
+
+    Owner's rules:
+      - All items identical design → stack vertically, label = "front" (no SKU detail)
+      - Items have different designs → stack vertically, label = "Front - White XL" etc.
+      - 1cm gap between copies (for cutting)
+    """
+    if not rows:
+        return False, "No rows"
+
+    same_design = rows_have_same_design(rows)
+    log(f"  Order group: {len(rows)} items, same_design={same_design}", "INFO")
+
+    PADDING  = cm_to_px(1)
+    QTY_GAP  = cm_to_px(1.0)
+    TEXT_GAP = cm_to_px(0.3)
+    lbl_h    = build_label_layer("front").height + cm_to_px(2.0)
+
+    # Build zones for every row, attaching display_label and pre-built layers
+    # First pass: collect zones and compute canvas width
+    all_row_zones = []
+    for row in rows:
+        sku     = row.get("SKU") or ""
+        product = detect_product(sku)
+        zones   = build_zones(row, product)
+        for z in zones:
+            z["display_label"] = (z["label"].title() if same_design
+                                  else make_zone_label(z["label"], sku, use_sku_detail=True))
+        all_row_zones.append(zones)
+
+    all_zones_flat = [z for zones in all_row_zones for z in zones]
+    if not all_zones_flat:
+        return False, "No zones in any row"
+
+    # Canvas width — determined by the widest zone (e.g. adult XXL tshirt)
+    max_zw   = max(z["w"] for z in all_zones_flat)
+
+    # Second pass: pre-build layers using each zone's own spec width so smaller
+    # garments (e.g. kids tshirt 23cm) render proportionally smaller than adult XXL (30cm)
+    for zones in all_row_zones:
+        for z in zones:
+            draw_w = z["w"]   # use this zone's own spec width, not the widest
+            zh     = z["h"]
+
+            z["_img"] = z["_it"] = z["_il"] = None
+            if z["img_path"]:
+                z["_img"], z["_it"], z["_il"] = build_image_layer(z["img_path"], draw_w, zh, sku=z.get("sku"), no_bg_remove=no_bg_remove)
+            elif z["img_filename"]:
+                log(f"    WARNING image not found: {z['img_filename']}", "WARN")
+
+            z["_txt"] = z["_tt"] = z["_tl"] = None
+            if z["text_lines"]:
+                z["_txt"], z["_tt"], z["_tl"] = build_text_layer(
+                    z["text_lines"], z["font"], z["colour"], draw_w, zh)
+
+            z["_prev"] = z["_pnw"] = z["_pnh"] = None
+            if z.get("preview_url"):
+                pi = download_preview(z["preview_url"])
+                if pi:
+                    ratio = min(draw_w / pi.width, zh / pi.height)
+                    pnw = max(1, int(pi.width  * ratio))
+                    pnh = max(1, int(pi.height * ratio))
+                    z["_prev"] = pi.resize((pnw, pnh), Image.LANCZOS)
+                    z["_pnw"]  = pnw
+                    z["_pnh"]  = pnh
+
+            img_h    = z["_img"].height if z["_img"] else 0
+            txt_h    = z["_txt"].height if z["_txt"] else 0
+            raw_h    = txt_h + (TEXT_GAP + img_h if txt_h and img_h else img_h)
+            content_h = raw_h if raw_h > 0 else cm_to_px(1)
+            z["_txt_v_offset"] = 0
+            z["_txt_h"]    = txt_h
+            z["_img_h"]    = img_h
+            z["_content_h"] = content_h
+
+    canvas_w = PADDING + max_zw + PADDING
+
+    GAP = cm_to_px(0.5)  # gap between zones within the same item (front/back/sleeve)
+
+    def _row_canvas_h(zones):
+        if not zones:
+            return 0
+        return (PADDING
+                + sum(lbl_h + z["_content_h"] for z in zones)
+                + GAP * (len(zones) - 1)
+                + PADDING)
+
+    written_paths = []
+
+    for row_idx, (row, zones) in enumerate(zip(rows, all_row_zones)):
+        if not zones:
+            continue
+
+        row_h      = _row_canvas_h(zones)
+        row_layers = []
+        y_cursor   = PADDING
+
+        for zone_idx, zone in enumerate(zones):
+            display_label = zone["display_label"]
+            x_left    = PADDING + (max_zw - zone["w"]) // 2
+            img_start = y_cursor + lbl_h
+
+            lbl = build_label_layer(display_label)
+            row_layers.append({
+                "name": f"{display_label} label",
+                "image": lbl,
+                "top": y_cursor,
+                "left": x_left,
+                "opacity": 255, "visible": True,
+            })
+
+            v_off = zone.get("_txt_v_offset", 0)
+            if zone["_txt"]:
+                _tl_dict2 = {
+                    "name": f"{display_label} CustomerText",
+                    "image": zone["_txt"],
+                    "top": img_start + v_off + zone["_tt"],
+                    "left": x_left + zone["_tl"],
+                    "opacity": 255, "visible": True,
+                }
+                if EDITABLE_TEXT_AVAILABLE and zone.get("text_lines"):
+                    _ps_font2 = resolve_ps_font_name(zone.get("font", "arial"))
+                    _r2, _g2, _b2 = hex_to_rgb(zone.get("colour", "#ffffff"))
+                    _tl_dict2["_text_blocks"] = build_editable_text_tagged_blocks(
+                        text="\n".join(zone["text_lines"]),
+                        font_name=_ps_font2,
+                        font_size_px=zone["_txt"].height,
+                        r=_r2, g=_g2, b=_b2,
+                        px_per_cm=PX_PER_CM,
+                        layer_left=x_left + zone["_tl"],
+                        layer_top=img_start + v_off + zone["_tt"],
+                        layer_w=zone["_txt"].width,
+                        layer_h=zone["_txt"].height,
+                    )
+                row_layers.append(_tl_dict2)
+
+            if zone["_img"]:
+                img_top = img_start + zone["_txt_h"] + (TEXT_GAP if zone["_txt"] else 0) + zone["_it"]
+                row_layers.append({
+                    "name": f"{display_label} CustomerImage",
+                    "image": zone["_img"],
+                    "top": img_top,
+                    "left": x_left + zone["_il"],
+                    "opacity": 255, "visible": True,
+                })
+
+            if zone["_prev"]:
+                pnh       = zone["_pnh"]
+                pnw       = zone["_pnw"]
+                content_h = zone["_content_h"]
+                row_layers.append({
+                    "name":    f"{display_label} Preview Reference",
+                    "image":   zone["_prev"],
+                    "top":     img_start + (content_h - pnh) // 2,
+                    "left":    x_left + (max_zw - pnw) // 2,
+                    "opacity": 255,
+                    "visible": False,
+                })
+
+            y_cursor += lbl_h + zone["_content_h"]
+            if zone_idx < len(zones) - 1:
+                y_cursor += GAP
+
+        if row_idx == 0:
+            row_path = out_path
+        else:
+            base = out_path[:-4] if out_path.lower().endswith('.psd') else out_path
+            row_path = f"{base}-{row_idx}.psd"
+
+        actual = write_psd(row_path, canvas_w, row_h, row_layers)
+        if actual and os.path.isfile(actual):
+            written_paths.append(actual)
+
+    if not written_paths:
+        return False, "PSD file not written"
+
+    total_mb = sum(os.path.getsize(p) for p in written_paths) / (1024 * 1024)
+    labels   = [z.get("display_label") for zones in all_row_zones for z in zones]
+    return True, f"{total_mb:.1f} MB total | {len(written_paths)} file(s) | labels: {labels}"
+
+
+# ─── DATABASE ─────────────────────────────────────────────────────────────────
+
+def get_db():
+    return _db_get_connection()
+
+def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=False, reprocess=False, date_filter=None, date_after=None, font_filter=None, hours=None, with_images=False):
+    conn  = get_db()
+    cur   = conn.cursor()
+    if reprocess:
+        where = "1=1"   # skip IsDesignComplete filter when reprocessing
+    else:
+        where = "(d.IsDesignComplete = 0 OR d.IsDesignComplete IS NULL)"
+    if order_id_filter:
+        if isinstance(order_id_filter, list):
+            # Flatten any comma-separated values in the list
+            flat = []
+            for item in order_id_filter:
+                flat.extend(i.strip() for i in item.split(",") if i.strip())
+            ids = "','".join(flat)
+            where += f" AND o.OrderID IN ('{ids}')"
+        else:
+            # Also handle comma-separated string
+            parts = [i.strip() for i in order_id_filter.split(",") if i.strip()]
+            if len(parts) > 1:
+                ids = "','".join(parts)
+                where += f" AND o.OrderID IN ('{ids}')"
+            else:
+                where += f" AND o.OrderID = '{order_id_filter}'"
+    if sku_filter:
+        like_clauses = " OR ".join(f"o.SKU LIKE '%{s}%'" for s in sku_filter.split(","))
+        where += f" AND ({like_clauses})"
+    if multizone:
+        where += " AND d.PrintLocation LIKE '%+%'"
+    if date_filter:
+        where += f" AND CAST(o.DateAdd AS DATE) = '{date_filter}'"
+    if date_after:
+        where += f" AND o.DateAdd >= '{date_after}'"
+    if hours:
+        where += f" AND o.DateAdd >= DATEADD(HOUR, -{hours}, GETUTCDATE())"
+    if with_images:
+        where += (" AND (ISNULL(d.FrontImage,'') <> '' OR ISNULL(d.BackImage,'') <> ''"
+                  " OR ISNULL(d.PocketImage,'') <> '' OR ISNULL(d.SleeveImage,'') <> '')")
+    if font_filter:
+        fonts = [f.strip() for f in font_filter.split(",") if f.strip()]
+        like_parts = []
+        for f in fonts:
+            like_parts.append(f"d.FrontFonts LIKE '%{f}%'")
+            like_parts.append(f"d.BackFonts LIKE '%{f}%'")
+        where += f" AND ({' OR '.join(like_parts)})"
+    top = f"TOP {limit}" if limit else ""
+    # Check whether the premium font columns exist (live DB has them, local may not)
+    try:
+        cur.execute("SELECT TOP 0 FrontPremiumFont FROM tblCustomOrderDetails")
+        premium_cols = ", d.FrontPremiumFont, d.BackPremiumFont, d.PocketPremiumFont, d.SleevePremiumFont"
+    except Exception:
+        premium_cols = ""
+        conn.close(); conn = get_db(); cur = conn.cursor()
+
+    cur.execute(f"""
+        SELECT {top}
+            o.OrderID, o.SKU, o.ItemType, o.Quantity,
+            d.idCustomOrderDetails, d.PrintLocation,
+            d.FrontText, d.FrontFonts, d.FrontColours,
+            d.FrontImage, d.FrontImageJSON, d.FrontPreviewImage,
+            d.BackText, d.BackFonts, d.BackColours,
+            d.BackImage, d.BackImageJSON, d.BackPreviewImage,
+            d.PocketText, d.PocketFonts, d.PocketColours,
+            d.PocketImage, d.PocketImageJSON, d.PocketPreviewImage,
+            d.SleeveText, d.SleeveFonts, d.SleeveColours,
+            d.SleeveImage, d.SleeveImageJSON, d.SleevePreviewImage
+            {premium_cols}
+        FROM tblCustomOrder o
+        JOIN tblCustomOrderDetails d ON o.idCustomOrder = d.idCustomOrder
+        WHERE {where}
+        ORDER BY o.DateAdd ASC
+    """)
+    cols = [c[0] for c in cur.description]
+    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+def mark_complete(detail_id, out_path):
+    conn = get_db()
+    conn.cursor().execute("""
+        UPDATE tblCustomOrderDetails
+        SET IsDesignComplete  = 1,
+            IsOrderProcess    = 1,
+            ProcessBy         = 'BatchProcessor',
+            ProcessTime       = GETDATE(),
+            AdditionalPSD     = ?,
+            Processed_Orders  = 'Completed'
+        WHERE idCustomOrderDetails = ?
+    """, out_path, detail_id)
+    conn.commit()
+    conn.close()
+
+# ─── GOOGLE DRIVE UPLOAD ──────────────────────────────────────────────────────
+
+GDRIVE_CREDENTIALS  = os.environ.get("GDRIVE_CREDENTIALS", os.path.join(_base, "credentials.json"))
+GDRIVE_TOKEN        = os.environ.get("GDRIVE_TOKEN",       os.path.join(_base, "gdrive_token.json"))
+GDRIVE_ROOT_FOLDER  = "1ZObOngMUAQo519ThI0vEckR4waKp7bsj"   # shared Drive folder
+GDRIVE_SCOPES       = ["https://www.googleapis.com/auth/drive.file"]
+
+_gdrive_service = None   # module-level cache
+
+def get_gdrive_service():
+    global _gdrive_service
+    if _gdrive_service:
+        return _gdrive_service
+    try:
+        from google.oauth2.credentials import Credentials
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+
+        creds = None
+        if os.path.exists(GDRIVE_TOKEN):
+            creds = Credentials.from_authorized_user_file(GDRIVE_TOKEN, GDRIVE_SCOPES)
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(GDRIVE_CREDENTIALS, GDRIVE_SCOPES)
+                creds = flow.run_local_server(port=0)
+            with open(GDRIVE_TOKEN, "w") as f:
+                f.write(creds.to_json())
+
+        _gdrive_service = build("drive", "v3", credentials=creds)
+        return _gdrive_service
+    except Exception as e:
+        log(f"Google Drive auth failed: {e}", "WARN")
+        return None
+
+
+def gdrive_get_or_create_folder(service, name, parent_id):
+    """Return the Drive folder ID for `name` inside `parent_id`, creating it if needed."""
+    q = (f"name='{name}' and mimeType='application/vnd.google-apps.folder' "
+         f"and '{parent_id}' in parents and trashed=false")
+    res = service.files().list(q=q, fields="files(id,name)", pageSize=1).execute()
+    items = res.get("files", [])
+    if items:
+        return items[0]["id"]
+    meta = {
+        "name":     name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents":  [parent_id],
+    }
+    folder = service.files().create(body=meta, fields="id").execute()
+    return folder["id"]
+
+
+def gdrive_upload_file(service, local_path, parent_id):
+    """Upload a file to Drive, replacing any existing file with the same name."""
+    from googleapiclient.http import MediaFileUpload
+    fname = os.path.basename(local_path)
+
+    # Delete existing file with same name to avoid duplicates
+    q = f"name='{fname}' and '{parent_id}' in parents and trashed=false"
+    existing = service.files().list(q=q, fields="files(id)", pageSize=1).execute().get("files", [])
+    for f in existing:
+        service.files().delete(fileId=f["id"]).execute()
+
+    mime = "application/octet-stream"
+    media = MediaFileUpload(local_path, mimetype=mime, resumable=True, chunksize=10 * 1024 * 1024)
+    meta  = {"name": fname, "parents": [parent_id]}
+    uploaded = service.files().create(body=meta, media_body=media, fields="id,name,size").execute()
+    size_mb = int(uploaded.get("size", 0)) / 1_048_576
+    return uploaded["id"], size_mb
+
+
+def gdrive_upload_psd(local_path, date_str, folder_type, colour_sub):
+    """Mirror the local folder structure on Drive and upload the PSD."""
+    try:
+        service = get_gdrive_service()
+        if not service:
+            return False
+
+        # Build path: ROOT / date / folder_type / [colour_sub]
+        date_id   = gdrive_get_or_create_folder(service, date_str,    GDRIVE_ROOT_FOLDER)
+        type_id   = gdrive_get_or_create_folder(service, folder_type, date_id)
+        parent_id = gdrive_get_or_create_folder(service, colour_sub, type_id) if colour_sub else type_id
+
+        file_id, size_mb = gdrive_upload_file(service, local_path, parent_id)
+        log(f"  Drive: uploaded {os.path.basename(local_path)}  ({size_mb:.1f} MB)", "OK")
+        return True
+    except Exception as e:
+        log(f"  Drive upload failed: {e}", "WARN")
+        return False
+
+
+def _get_psd_split_paths(base_path):
+    """Return base_path plus any -1, -2, ... split files that exist alongside it."""
+    paths = [base_path] if os.path.isfile(base_path) else []
+    root = base_path[:-4] if base_path.lower().endswith('.psd') else base_path
+    i = 1
+    while True:
+        p = f"{root}-{i}.psd"
+        if os.path.isfile(p):
+            paths.append(p)
+            i += 1
+        else:
+            break
+    return paths
+
+
+# ─── MAIN ─────────────────────────────────────────────────────────────────────
+
+def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, multizone=False, reprocess=False, date_filter=None, date_after=None, upload_gdrive=False, upload_nas=False, no_bg_remove=False, output_folder=None, font_filter=None, hours=None, no_mark=True, with_images=False):
+    log("=" * 60)
+    log(f"Varsany Batch Processor  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    log(f"Resolution : {DPI} DPI  ({PX_PER_CM:.2f} px/cm)")
+    log(f"Images     : {len(IMAGE_INDEX):,} files indexed")
+    log(f"Fonts      : {list(FONT_INDEX.keys())}")
+    if dry_run:
+        log("MODE       : DRY RUN — no files written")
+    log("=" * 60)
+
+    orders = fetch_orders(limit=limit, order_id_filter=order_id_filter,
+                          sku_filter=sku_filter, multizone=multizone, reprocess=reprocess,
+                          date_filter=date_filter, date_after=date_after, font_filter=font_filter,
+                          hours=hours, with_images=with_images)
+    total  = len(orders)
+    log(f"Orders to process: {total}")
+
+    if not orders:
+        log("Nothing to process.")
+        return
+
+    ok_count   = 0
+    fail_count = 0
+    skip_count = 0
+    today      = datetime.now().strftime("%Y-%m-%d")
+    out_dir    = output_folder if output_folder else os.path.join(OUTPUT_FOLDER, today)
+    os.makedirs(out_dir, exist_ok=True)
+
+    nas_uploader = None
+    if upload_nas:
+        if SYNOLOGY_AVAILABLE:
+            nas_uploader = SynologyUploader()
+            if not nas_uploader.connected:
+                log("NAS connection failed — uploads will be skipped", "WARN")
+                nas_uploader = None
+        else:
+            log("synology_upload.py not found — --nas flag ignored", "WARN")
+
+    # Group rows by OrderID — one PSD per order (may contain multiple SKUs)
+    from collections import OrderedDict
+    order_groups = OrderedDict()
+    for row in orders:
+        oid = row["OrderID"]
+        if oid not in order_groups:
+            order_groups[oid] = []
+        order_groups[oid].append(row)
+
+    total_orders = len(order_groups)
+    log(f"Unique orders: {total_orders}  (from {total} rows)")
+
+    for i, (order_id, group_rows) in enumerate(order_groups.items(), 1):
+        first_row   = group_rows[0]
+        safe_id     = order_id.replace("/", "-")
+        sku_raw     = first_row.get("SKU") or ""
+        sku         = sku_raw.replace("/", "-").replace("\\", "-")
+        is_emb_rhine = any(is_emb_rhine_row(r) for r in group_rows)
+        is_multi     = any(is_multizone_row(r) for r in group_rows)
+        is_kids_hood = any("kidshoo" in (r.get("SKU") or "").lower() or
+                           "gymhoodie" in (r.get("SKU") or "").lower() or
+                           "kidshood" in (r.get("SKU") or "").lower()
+                           for r in group_rows)
+        if is_emb_rhine:
+            log(f"  Skipping {order_id} — Emb & Rhine (manual process)", "INFO")
+            skip_count += 1
+            continue
+        if is_multi:
+            folder_type = "Automated"
+        elif is_kids_hood:
+            folder_type = "DTF Kids Hoodie"
+        else:
+            folder_type = "DTF Front"
+        colour_sub  = sku_colour_folder(sku_raw)
+        if colour_sub:
+            cat_dir = os.path.join(out_dir, folder_type, colour_sub)
+        else:
+            cat_dir = os.path.join(out_dir, folder_type)
+        os.makedirs(cat_dir, exist_ok=True)
+
+        # Filename: OrderID.psd
+        if len(group_rows) == 1:
+            base_name = f"{safe_id}.psd"
+        else:
+            base_name = f"{safe_id}_{len(group_rows)}items.psd"
+        base_path = os.path.join(cat_dir, base_name)
+        out_path  = base_path
+        counter   = 2
+        while os.path.exists(out_path):
+            out_path = base_path.replace(".psd", f"_{counter}.psd")
+            counter += 1
+
+        skus_str = " | ".join(r.get("SKU", "") for r in group_rows)
+        log(f"[{i}/{total_orders}] {order_id}  ({len(group_rows)} items)  |  {skus_str}")
+
+        if dry_run:
+            for row in group_rows:
+                product = detect_product(row.get("SKU") or "")
+                zones   = build_zones(row, product)
+                for z in zones:
+                    status = "FOUND" if z["img_path"] else ("MISSING" if z["img_filename"] else "text-only")
+                    log(f"  [{z['label']}]  img={z['img_filename'] or 'none'} ({status})  text={z['text_lines']}", "DRY")
+                if not zones:
+                    log("  SKIP — no zones", "DRY")
+            continue
+
+        try:
+            if len(group_rows) == 1:
+                ok, msg = build_psd_for_order(order_id, first_row, out_path, no_bg_remove=no_bg_remove)
+            else:
+                ok, msg = build_merged_psd_for_order_group(order_id, group_rows, out_path, no_bg_remove=no_bg_remove)
+
+            if ok:
+                if not no_mark:
+                    for row in group_rows:
+                        mark_complete(row["idCustomOrderDetails"], out_path)
+                log(f"  OK  {msg}", "OK")
+                ok_count += 1
+                if upload_gdrive and not dry_run:
+                    for _split in _get_psd_split_paths(out_path):
+                        gdrive_upload_psd(_split, today, folder_type, colour_sub)
+                if nas_uploader and not dry_run:
+                    for _split in _get_psd_split_paths(out_path):
+                        nas_uploader.upload(_split, sub_folder=today)
+            else:
+                log(f"  FAIL  {msg}", "FAIL")
+                fail_count += 1
+        except Exception as e:
+            log(f"  ERROR  {e}", "ERROR")
+            log(traceback.format_exc()[-400:], "ERROR")
+            fail_count += 1
+
+        if i % 50 == 0:
+            log(f"--- Progress {i}/{total_orders}  ok={ok_count}  fail={fail_count} ---")
+
+    log("=" * 60)
+    log(f"DONE  {ok_count} OK  |  {fail_count} FAILED  |  {skip_count} SKIPPED (Emb & Rhine)  |  Output: {out_dir}")
+    log("=" * 60)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Varsany Batch PSD Processor")
+    parser.add_argument("--limit",      type=int, default=None, help="Max orders to process")
+    parser.add_argument("--order",      type=str, default=None, action="append", help="Process specific OrderID(s) — can be repeated")
+    parser.add_argument("--dry-run",    action="store_true",    help="Preview only, no files written")
+    parser.add_argument("--dpi",        type=int, default=320,  help="Output resolution in DPI (pixels/inch)")
+    parser.add_argument("--sku-filter", type=str, default=None, help="Comma-separated SKU substrings e.g. MenTee,WmnTee")
+    parser.add_argument("--multizone",   action="store_true",    help="Only orders with multiple print zones")
+    parser.add_argument("--reprocess",   action="store_true",    help="Re-export already-completed orders")
+    parser.add_argument("--date",        type=str, default=None, help="Export orders from a specific date e.g. 2026-02-28")
+    parser.add_argument("--date-after",  type=str, default=None, help="Export orders placed after a date e.g. 2026-04-10")
+    parser.add_argument("--gdrive",        action="store_true",    help="Upload finished PSDs to Google Drive after export")
+    parser.add_argument("--nas",           action="store_true",    help="Upload finished PSDs to Synology NAS after export")
+    parser.add_argument("--no-bg-remove",  action="store_true",    help="Skip background removal for all zones")
+    parser.add_argument("--output",        type=str, default=None, help="Override output folder e.g. C:\\Varsany\\Output\\test1")
+    parser.add_argument("--font-filter",   type=str, default=None, help="Comma-separated font name substrings e.g. 'Mermaid Font,Block Font'")
+    parser.add_argument("--hours",         type=int, default=None, help="Only process orders added in the last N hours e.g. --hours 2")
+    parser.add_argument("--mark",          action="store_true",    help="Mark orders as complete in the DB after export (requires UPDATE permission)")
+    parser.add_argument("--with-images",   action="store_true",    help="Only process orders that have a customer image upload")
+    args = parser.parse_args()
+
+    DPI       = args.dpi
+    PX_PER_CM = DPI / 2.54
+
+    run_batch(
+        limit          = args.limit,
+        order_id_filter= args.order,
+        dry_run        = args.dry_run,
+        sku_filter     = args.sku_filter,
+        multizone      = args.multizone,
+        reprocess      = args.reprocess,
+        date_filter    = args.date,
+        date_after     = args.date_after,
+        upload_gdrive  = args.gdrive,
+        upload_nas     = args.nas,
+        no_bg_remove   = args.no_bg_remove,
+        output_folder  = args.output,
+        font_filter    = args.font_filter,
+        hours          = args.hours,
+        no_mark        = not args.mark,
+        with_images    = args.with_images,
+    )

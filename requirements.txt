@@ -1,0 +1,9 @@
+pyodbc
+Pillow
+python-dotenv
+requests
+urllib3
+rembg
+numpy
+fonttools
+flask
