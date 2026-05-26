@@ -10,10 +10,10 @@ Usage (from batch_processor.py or prototype_app.py):
 
     submit_job(
         order_id="204-0722247-8187513",
-        template_path=r"W:\VarsaniAutomation\templates\WmnTee_PnkXXL.psd",
+        template_path="W:/VarsaniAutomation/templates/WmnTee_PnkXXL.psd",
         zones={
             "front": {
-                "customer_image": r"C:\Varsany\Uploads\customer.png",
+                "customer_image": "C:/Varsany/Uploads/customer.png",
                 "text_lines":     ["Happy Birthday", "Emma!"],
                 "font_name":      "Bebas Neue",
                 "colour_hex":     "#FFFFFF",
@@ -24,7 +24,7 @@ Usage (from batch_processor.py or prototype_app.py):
                 "colour_hex": "#FFD700",
             }
         },
-        output_path=r"C:\Varsany\Output\2026-05-26\204-0722247-8187513.psd",
+        output_path="C:/Varsany/Output/2026-05-26/204-0722247-8187513.psd",
     )
 
     success = wait_for_completion("204-0722247-8187513", timeout_sec=120)
@@ -42,7 +42,7 @@ from pathlib import Path
 # Override with env vars if needed.
 _BRIDGE_ROOT = Path(os.environ.get(
     "PS_BRIDGE_DIR",
-    r"C:\Varsany\photoshop_bridge"          # fallback for local dev / no NAS
+    r"C:\Varsany\photoshop_bridge"
 ))
 
 JOBS_DIR   = _BRIDGE_ROOT / "jobs"          # Python writes jobs here
@@ -119,20 +119,27 @@ def submit_job(
 
 def wait_for_completion(order_id: str, timeout_sec: int = 120) -> bool:
     """
-    Block until Photoshop finishes the job or times out.
+    Submit job then launch Photoshop to process it, wait for completion.
     Returns True on success, False on error or timeout.
     """
     done_file  = DONE_DIR  / f"{order_id}.json"
     error_file = ERROR_DIR / f"{order_id}.json"
-    deadline   = time.time() + timeout_sec
 
+    # Launch Photoshop with the worker script to process pending jobs
+    jsx = Path(__file__).parent / "ps_worker.jsx"
+    ps  = _find_photoshop()
+    if ps and jsx.exists():
+        import subprocess
+        subprocess.Popen([ps, str(jsx)])
+
+    deadline = time.time() + timeout_sec
     while time.time() < deadline:
         if done_file.exists():
             return True
         if error_file.exists():
             _log_error(error_file)
             return False
-        time.sleep(1)
+        time.sleep(2)
 
     print(f"[PS Bridge] TIMEOUT waiting for order {order_id}")
     return False
