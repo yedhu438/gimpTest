@@ -1,15 +1,18 @@
 // ps_worker.jsx  —  Varsany Automation
 // ======================================
-// Triggered by Python via Windows COM (win32com DoJavaScriptFile).
-// Photoshop must already be open.
-// Scans jobs folder, processes each job, exits.
-// ES3 compatible (no JSON object, no Array.forEach, no toISOString).
+// Load this ONCE via File > Scripts > Browse.
+// Uses Photoshop's idle event to poll the jobs folder every 3 seconds
+// without freezing the UI. Photoshop stays fully usable while it runs.
+// Close Photoshop to stop it.
 
 #target photoshop
 
 var JOBS_DIR  = new Folder("C:/Varsany/photoshop_bridge/jobs");
 var DONE_DIR  = new Folder("C:/Varsany/photoshop_bridge/done");
 var ERROR_DIR = new Folder("C:/Varsany/photoshop_bridge/error");
+
+var POLL_INTERVAL_MS = 3000;   // check every 3 seconds
+var lastPoll = 0;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function ts() {
@@ -32,8 +35,8 @@ function readFile(f) {
 
 function markDone(filename, orderId, outPath) {
     writeFile(DONE_DIR, filename,
-        '{"order_id":"'+orderId+'","output_path":"'+outPath.replace(/\\/g,"\\\\")+
-        '","completed_at":"'+ts()+'"}');
+        '{"order_id":"'+orderId+'","output_path":"'
+        +outPath.replace(/\\/g,"\\\\")+'","completed_at":"'+ts()+'"}');
 }
 
 function markError(filename, orderId, msg) {
@@ -58,13 +61,11 @@ function findLayer(container, name) {
 function placeImage(doc, imgPath, layerName) {
     var f = new File(imgPath);
     if (!f.exists) { log("  Image not found: "+imgPath); return; }
-    // Place Embedded — ACE colour engine handles ICC conversion
     var d = new ActionDescriptor();
     d.putPath(charIDToTypeID("null"), f);
     d.putEnumerated(charIDToTypeID("FTcs"), charIDToTypeID("QCSt"), charIDToTypeID("Qcsa"));
     executeAction(charIDToTypeID("Plc "), d, DialogModes.NO);
     doc.activeLayer.name = layerName;
-    // Rasterize
     var d2 = new ActionDescriptor();
     d2.putEnumerated(charIDToTypeID("null"), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
     executeAction(charIDToTypeID("Rstr"), d2, DialogModes.NO);
@@ -73,7 +74,7 @@ function placeImage(doc, imgPath, layerName) {
 function setText(doc, layerName, lines, hex, font) {
     var layer = findLayer(doc, layerName);
     if (!layer || layer.kind !== LayerKind.TEXT) {
-        log("  Text layer '"+layerName+"' not found or not text"); return;
+        log("  Text layer '"+layerName+"' not found"); return;
     }
     var ti = layer.textItem;
     var txt = "";
@@ -105,25 +106,15 @@ function processJob(jobFile) {
     log("Processing: "+orderId);
     var doc = null;
     try {
-        // Open template
         var tpl = new File(job.template);
         if (!tpl.exists) throw new Error("Template not found: "+job.template);
-        // Try multiple open methods for PS 2026 compatibility
-        try {
-            doc = app.open(tpl);
-        } catch(e1) {
-            try {
-                app.load(tpl);
-                doc = app.activeDocument;
-            } catch(e2) {
-                var dOpen = new ActionDescriptor();
-                dOpen.putPath(charIDToTypeID("null"), tpl);
-                executeAction(charIDToTypeID("Opn "), dOpen, DialogModes.NO);
-                doc = app.activeDocument;
-            }
-        }
 
-        // Process each zone
+        // Ensure output directory exists
+        var outDir = new Folder(new File(job.output_path).parent.fsName);
+        if (!outDir.exists) outDir.create();
+
+        doc = app.open(tpl);
+
         var zones = job.zones;
         for (var z in zones) {
             if (!zones.hasOwnProperty(z)) continue;
@@ -134,8 +125,7 @@ function processJob(jobFile) {
                 setText(doc, "CustomerText_"+z, zone.text_lines, zone.colour_hex, zone.font_name);
         }
 
-        // Save PSD
-        var out = new File(job.output_path);
+        var out  = new File(job.output_path);
         var opts = new PhotoshopSaveOptions();
         opts.layers = true;
         opts.embedColorProfile = true;
@@ -153,18 +143,27 @@ function processJob(jobFile) {
         try { if(doc) doc.close(SaveOptions.DONOTSAVECHANGES); } catch(x){}
         markError(jobFile.name, orderId, e.message || String(e));
         try { jobFile.remove(); } catch(x){}
-        log("Error: "+orderId+" — "+e.message);
+        log("Error on "+orderId+": "+e.message);
     }
 }
 
-// ── Run ────────────────────────────────────────────────────────────────────────
-log("PS Worker start");
-var jobs = JOBS_DIR.getFiles("*.json");
-if (!jobs || jobs.length === 0) {
-    log("No jobs.");
-} else {
-    log("Jobs found: "+jobs.length);
+// ── Idle event handler — polls without freezing UI ────────────────────────────
+function onIdle() {
+    var now = (new Date()).getTime();
+    if (now - lastPoll < POLL_INTERVAL_MS) return;
+    lastPoll = now;
+
+    var jobs = JOBS_DIR.getFiles("*.json");
+    if (!jobs || jobs.length === 0) return;
+
+    log("Found "+jobs.length+" job(s)");
     jobs.sort(function(a,b){ return a.name < b.name ? -1 : 1; });
-    for (var i = 0; i < jobs.length; i++) processJob(jobs[i]);
+    processJob(jobs[0]);   // process one per idle tick to stay responsive
 }
-log("PS Worker done.");
+
+// ── Register idle event ────────────────────────────────────────────────────────
+app.notifiers.removeAll();   // clear any old notifiers
+app.notifiers.add("Idle", new File($.fileName));
+
+log("Varsany PS Worker ready — polling every "+POLL_INTERVAL_MS+"ms");
+log("Jobs folder: "+JOBS_DIR.fsName);
