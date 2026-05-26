@@ -149,7 +149,12 @@ function processJob(jobFile) {
     try {
         var templateFile = new File(job.template);
         if (!templateFile.exists) throw new Error("Template not found: " + job.template);
-        app.load(templateFile);
+
+        // Use low-level action to open — works across all PS versions
+        var descOpen = new ActionDescriptor();
+        descOpen.putPath(charIDToTypeID("null"), templateFile);
+        descOpen.putBoolean(charIDToTypeID("Mnmz"), false);
+        executeAction(charIDToTypeID("Opn "), descOpen, DialogModes.NO);
         doc = app.activeDocument;
 
         var zones = job.zones;
