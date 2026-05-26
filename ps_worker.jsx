@@ -149,7 +149,10 @@ function processJob(jobFile) {
     try {
         var templateFile = new File(job.template);
         if (!templateFile.exists) throw new Error("Template not found: " + job.template);
-        doc = app.open(templateFile);
+
+        // Open with explicit options to avoid "parameters not valid" error
+        var openOpts = new PhotoshopOpenOptions();
+        doc = app.open(templateFile, openOpts);
 
         var zones = job.zones;
         for (var z in zones) {
