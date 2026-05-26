@@ -84,17 +84,18 @@ def _trigger_photoshop():
     Tell the open Photoshop to run ps_worker.jsx using a VBScript one-liner.
     No pywin32 needed — cscript.exe is built into Windows.
     """
-    vbs = (
+    vbs_file = _BRIDGE_ROOT / "trigger_ps.vbs"
+    vbs_content = (
         'Dim ps : Set ps = CreateObject("Photoshop.Application") : '
         'ps.DoJavaScriptFile "' + JSX_PATH.replace("\\", "\\\\") + '"'
     )
+    vbs_file.write_text(vbs_content, encoding="utf-8")
     try:
         subprocess.Popen(
-            ["cscript", "//Nologo", "//E:vbscript", "//B", "-"],
-            stdin=subprocess.PIPE,
+            [r"C:\Windows\System32\cscript.exe", "//Nologo", str(vbs_file)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-        ).communicate(input=vbs.encode())
+        )
         return True
     except Exception as e:
         print(f"[PS Bridge] VBScript trigger failed: {e}")

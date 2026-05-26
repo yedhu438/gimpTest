@@ -108,7 +108,20 @@ function processJob(jobFile) {
         // Open template
         var tpl = new File(job.template);
         if (!tpl.exists) throw new Error("Template not found: "+job.template);
-        doc = app.open(tpl);
+        // Try multiple open methods for PS 2026 compatibility
+        try {
+            doc = app.open(tpl);
+        } catch(e1) {
+            try {
+                app.load(tpl);
+                doc = app.activeDocument;
+            } catch(e2) {
+                var dOpen = new ActionDescriptor();
+                dOpen.putPath(charIDToTypeID("null"), tpl);
+                executeAction(charIDToTypeID("Opn "), dOpen, DialogModes.NO);
+                doc = app.activeDocument;
+            }
+        }
 
         // Process each zone
         var zones = job.zones;
