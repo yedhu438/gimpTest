@@ -49,6 +49,85 @@ try:
 except ImportError:
     EDITABLE_TEXT_AVAILABLE = False
 
+# ─── PHOTOSHOP BRIDGE (Option 2 — Headless Photoshop) ────────────────────────
+# Set USE_PHOTOSHOP_BRIDGE=1 in your .env to route orders through real Photoshop
+# instead of the Python PSD writer.  Falls back to Python writer automatically
+# if Photoshop is not running or ps_bridge.py is unavailable.
+#
+# Requires:
+#   - ps_worker.jsx running inside Photoshop (see ps_worker.jsx)
+#   - PSD templates in PS_TEMPLATES_DIR with layers named:
+#       "CustomerImage_front", "CustomerText_front",
+#       "CustomerImage_back",  "CustomerText_back", etc.
+#   - .env:  USE_PHOTOSHOP_BRIDGE=1
+#            PS_BRIDGE_DIR=C:\Varsany\photoshop_bridge
+#            PS_TEMPLATES_DIR=W:\VarsaniAutomation\templates
+_USE_PS_BRIDGE   = os.environ.get("USE_PHOTOSHOP_BRIDGE", "0").strip() == "1"
+TEMPLATES_FOLDER = os.environ.get("PS_TEMPLATES_DIR", r"W:\VarsaniAutomation\templates")
+
+try:
+    from ps_bridge import (submit_job as _ps_submit,
+                           wait_for_completion as _ps_wait,
+                           ps_worker_running as _ps_alive)
+    PS_BRIDGE_AVAILABLE = True
+except ImportError:
+    PS_BRIDGE_AVAILABLE = False
+
+def _build_psd_via_photoshop(order_id, row, out_path):
+    """Route one order through Headless Photoshop (ps_worker.jsx).
+    Returns (success: bool, message: str) — same contract as build_psd_for_order.
+    """
+    if not PS_BRIDGE_AVAILABLE:
+        return False, "ps_bridge.py not found"
+    if not _ps_alive():
+        return False, "Photoshop not running"
+
+    sku     = row.get("SKU") or ""
+    product = detect_product(sku)
+
+    # Find best-matching template: SKU-specific -> product generic -> default
+    template_path = None
+    for candidate in [
+        os.path.join(TEMPLATES_FOLDER, f"{sku}.psd"),
+        os.path.join(TEMPLATES_FOLDER, f"{product}.psd"),
+        os.path.join(TEMPLATES_FOLDER, "default.psd"),
+    ]:
+        if os.path.isfile(candidate):
+            template_path = candidate
+            break
+
+    if not template_path:
+        return False, f"No template found for {sku}/{product} in {TEMPLATES_FOLDER}"
+
+    # Build zones dict from the order row (mirrors build_zones logic)
+    zone_map = {
+        "front":  ("FrontText",  "FrontFonts",  "FrontColours",  "FrontImage"),
+        "back":   ("BackText",   "BackFonts",   "BackColours",   "BackImage"),
+        "pocket": ("PocketText", "PocketFonts", "PocketColours", "PocketImage"),
+        "sleeve": ("SleeveText", "SleeveFonts", "SleeveColours", "SleeveImage"),
+    }
+    zones = {}
+    for zone_name, (txt_col, font_col, col_col, img_col) in zone_map.items():
+        text_raw = (row.get(txt_col) or "").strip()
+        img_raw  = (row.get(img_col) or "").strip()
+        if not text_raw and not img_raw:
+            continue
+        zones[zone_name] = {
+            "customer_image": find_image(img_raw) if img_raw else None,
+            "text_lines":     parse_texts(text_raw) if text_raw else [],
+            "font_name":      parse_font(row.get(font_col) or ""),
+            "colour_hex":     parse_colour(row.get(col_col) or ""),
+        }
+
+    if not zones:
+        return False, "No zones — no image or text data"
+
+    _ps_submit(order_id, template_path, zones, out_path)
+    success = _ps_wait(order_id, timeout_sec=180)
+    if success:
+        return True, out_path
+    return False, "Photoshop worker timed out or errored"
+
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 # Database connection is centralised in db.py (reads from .env).
 
@@ -3158,10 +3237,20 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
             continue
 
         try:
-            if len(group_rows) == 1:
-                ok, msg = build_psd_for_order(order_id, first_row, out_path, no_bg_remove=no_bg_remove)
-            else:
-                ok, msg = build_merged_psd_for_order_group(order_id, group_rows, out_path, no_bg_remove=no_bg_remove)
+            # ── Engine selection ──────────────────────────────────────────────
+            # USE_PHOTOSHOP_BRIDGE=1 in .env → try Photoshop first, fall back
+            # to the Python writer if PS is not running or no template found.
+            ok = False
+            if _USE_PS_BRIDGE and len(group_rows) == 1:
+                ok, msg = _build_psd_via_photoshop(order_id, first_row, out_path)
+                if not ok:
+                    log(f"  PS Bridge: {msg} — falling back to Python writer", "WARN")
+
+            if not ok:
+                if len(group_rows) == 1:
+                    ok, msg = build_psd_for_order(order_id, first_row, out_path, no_bg_remove=no_bg_remove)
+                else:
+                    ok, msg = build_merged_psd_for_order_group(order_id, group_rows, out_path, no_bg_remove=no_bg_remove)
 
             if ok:
                 if not no_mark:
