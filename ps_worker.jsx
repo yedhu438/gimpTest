@@ -1,212 +1,157 @@
-// ps_worker.jsx
-// Varsany Automation — Headless Photoshop Worker
-// ================================================
-// ONE-SHOT processor — processes all pending jobs in the jobs folder then exits.
-// Python calls this script via subprocess for each batch, so Photoshop UI stays free.
-// ExtendScript (ES3) compatible.
+// ps_worker.jsx  —  Varsany Automation
+// ======================================
+// Triggered by Python via Windows COM (win32com DoJavaScriptFile).
+// Photoshop must already be open.
+// Scans jobs folder, processes each job, exits.
+// ES3 compatible (no JSON object, no Array.forEach, no toISOString).
 
 #target photoshop
 
-// ── Config ─────────────────────────────────────────────────────────────────────
 var JOBS_DIR  = new Folder("C:/Varsany/photoshop_bridge/jobs");
 var DONE_DIR  = new Folder("C:/Varsany/photoshop_bridge/done");
 var ERROR_DIR = new Folder("C:/Varsany/photoshop_bridge/error");
 
-// ── Timestamp (ES3 safe) ───────────────────────────────────────────────────────
-function isoTimestamp() {
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function ts() {
     var d = new Date();
-    function pad(n) { return n < 10 ? "0" + n : "" + n; }
-    return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate()) +
-           "T" + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+    function p(n) { return n < 10 ? "0"+n : ""+n; }
+    return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())
+           +"T"+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+}
+function log(m) { $.writeln("["+ts()+"] "+m); }
+
+function writeFile(folder, name, content) {
+    var f = new File(folder.fsName+"/"+name);
+    f.encoding = "UTF-8"; f.open("w"); f.write(content); f.close();
 }
 
-function log(msg) {
-    $.writeln("[" + isoTimestamp() + "] " + msg);
+function readFile(f) {
+    f.encoding = "UTF-8"; f.open("r");
+    var s = f.read(); f.close(); return s;
 }
 
-// ── Simple JSON stringify (ES3 safe) ───────────────────────────────────────────
-function simpleStringify(obj) {
-    var out = "{\n";
-    var first = true;
-    for (var k in obj) {
-        if (!obj.hasOwnProperty(k)) continue;
-        if (!first) out += ",\n";
-        first = false;
-        var v = obj[k];
-        if (v === null || v === undefined) {
-            out += '  "' + k + '": null';
-        } else if (typeof v === "string") {
-            out += '  "' + k + '": "' + v.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
-        } else {
-            out += '  "' + k + '": ' + v;
-        }
-    }
-    return out + "\n}";
+function markDone(filename, orderId, outPath) {
+    writeFile(DONE_DIR, filename,
+        '{"order_id":"'+orderId+'","output_path":"'+outPath.replace(/\\/g,"\\\\")+
+        '","completed_at":"'+ts()+'"}');
 }
 
-// ── Read JSON job file ─────────────────────────────────────────────────────────
-function readJSON(file) {
-    file.encoding = "UTF-8";
-    file.open("r");
-    var content = file.read();
-    file.close();
-    return eval("(" + content + ")");
+function markError(filename, orderId, msg) {
+    msg = (""+msg).replace(/\\/g,"\\\\").replace(/"/g,'\\"').replace(/\n/g," ");
+    writeFile(ERROR_DIR, filename,
+        '{"order_id":"'+orderId+'","error":"'+msg+'","failed_at":"'+ts()+'"}');
 }
 
-// ── Write result file ──────────────────────────────────────────────────────────
-function writeResultFile(targetDir, filename, dataObj) {
-    var outFile = new File(targetDir.fsName + "/" + filename);
-    outFile.encoding = "UTF-8";
-    outFile.open("w");
-    outFile.write(simpleStringify(dataObj));
-    outFile.close();
-}
-
-// ── Write error and move job ───────────────────────────────────────────────────
-function writeError(jobFile, orderId, errorMsg) {
-    log("ERROR on " + orderId + ": " + errorMsg);
-    writeResultFile(ERROR_DIR, jobFile.name, {
-        order_id:  orderId,
-        error:     errorMsg,
-        failed_at: isoTimestamp()
-    });
-    try { jobFile.remove(); } catch(e) {}
-}
-
-// ── Place customer image ───────────────────────────────────────────────────────
-function placeCustomerImage(doc, imagePath, layerName) {
-    var f = new File(imagePath);
-    if (!f.exists) { log("  Image not found: " + imagePath); return false; }
-    var idPlc = charIDToTypeID("Plc ");
-    var desc  = new ActionDescriptor();
-    desc.putPath(charIDToTypeID("null"), f);
-    desc.putEnumerated(charIDToTypeID("FTcs"), charIDToTypeID("QCSt"), charIDToTypeID("Qcsa"));
-    executeAction(idPlc, desc, DialogModes.NO);
-    var placed = doc.activeLayer;
-    placed.name = layerName;
-    var idRstr = charIDToTypeID("Rstr");
-    var descR  = new ActionDescriptor();
-    descR.putEnumerated(charIDToTypeID("null"), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
-    executeAction(idRstr, descR, DialogModes.NO);
-    return true;
-}
-
-// ── Update text layer ──────────────────────────────────────────────────────────
-function setTextLayer(doc, layerName, textLines, colourHex, fontName) {
-    var layer = findLayerByName(doc, layerName);
-    if (!layer) { log("  Text layer '" + layerName + "' not found"); return false; }
-    if (layer.kind !== LayerKind.TEXT) { log("  '" + layerName + "' is not text"); return false; }
-    var ti = layer.textItem;
-    var joined = "";
-    for (var i = 0; i < textLines.length; i++) {
-        if (i > 0) joined += "\r";
-        joined += textLines[i];
-    }
-    ti.contents = joined;
-    if (colourHex && colourHex.charAt(0) === "#") {
-        var hex = colourHex.slice(1);
-        var col = new SolidColor();
-        col.rgb.red   = parseInt(hex.slice(0,2), 16);
-        col.rgb.green = parseInt(hex.slice(2,4), 16);
-        col.rgb.blue  = parseInt(hex.slice(4,6), 16);
-        ti.color = col;
-    }
-    if (fontName) {
-        try { ti.font = fontName; } catch(e) {
-            log("  Font '" + fontName + "' not found — keeping default");
-        }
-    }
-    return true;
-}
-
-// ── Recursive layer search ─────────────────────────────────────────────────────
-function findLayerByName(container, name) {
+// ── Layer helpers ──────────────────────────────────────────────────────────────
+function findLayer(container, name) {
     var layers = container.layers;
     for (var i = 0; i < layers.length; i++) {
-        var l = layers[i];
-        if (l.name === name) return l;
-        if (l.typename === "LayerSet") {
-            var found = findLayerByName(l, name);
+        if (layers[i].name === name) return layers[i];
+        if (layers[i].typename === "LayerSet") {
+            var found = findLayer(layers[i], name);
             if (found) return found;
         }
     }
     return null;
 }
 
-// ── Process one job file ───────────────────────────────────────────────────────
+function placeImage(doc, imgPath, layerName) {
+    var f = new File(imgPath);
+    if (!f.exists) { log("  Image not found: "+imgPath); return; }
+    // Place Embedded — ACE colour engine handles ICC conversion
+    var d = new ActionDescriptor();
+    d.putPath(charIDToTypeID("null"), f);
+    d.putEnumerated(charIDToTypeID("FTcs"), charIDToTypeID("QCSt"), charIDToTypeID("Qcsa"));
+    executeAction(charIDToTypeID("Plc "), d, DialogModes.NO);
+    doc.activeLayer.name = layerName;
+    // Rasterize
+    var d2 = new ActionDescriptor();
+    d2.putEnumerated(charIDToTypeID("null"), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
+    executeAction(charIDToTypeID("Rstr"), d2, DialogModes.NO);
+}
+
+function setText(doc, layerName, lines, hex, font) {
+    var layer = findLayer(doc, layerName);
+    if (!layer || layer.kind !== LayerKind.TEXT) {
+        log("  Text layer '"+layerName+"' not found or not text"); return;
+    }
+    var ti = layer.textItem;
+    var txt = "";
+    for (var i = 0; i < lines.length; i++) { if (i>0) txt+="\r"; txt+=lines[i]; }
+    ti.contents = txt;
+    if (hex && hex.charAt(0)==="#") {
+        var c = new SolidColor();
+        c.rgb.red   = parseInt(hex.slice(1,3),16);
+        c.rgb.green = parseInt(hex.slice(3,5),16);
+        c.rgb.blue  = parseInt(hex.slice(5,7),16);
+        ti.color = c;
+    }
+    if (font) { try { ti.font = font; } catch(e) { log("  Font '"+font+"' unavailable"); } }
+}
+
+// ── Process one job ────────────────────────────────────────────────────────────
 function processJob(jobFile) {
-    var job = null;
-    var orderId = jobFile.name;
+    var orderId = jobFile.name.replace(".json","");
+    var job;
     try {
-        job = readJSON(jobFile);
-        orderId = job.order_id;
+        job = eval("("+readFile(jobFile)+")");
+        orderId = job.order_id || orderId;
     } catch(e) {
-        writeError(jobFile, orderId, "Cannot parse job: " + e.message);
+        markError(jobFile.name, orderId, "Parse error: "+e.message);
+        try { jobFile.remove(); } catch(x){}
         return;
     }
-    log("Processing: " + orderId);
+
+    log("Processing: "+orderId);
     var doc = null;
     try {
-        var templateFile = new File(job.template);
-        if (!templateFile.exists) throw new Error("Template not found: " + job.template);
+        // Open template
+        var tpl = new File(job.template);
+        if (!tpl.exists) throw new Error("Template not found: "+job.template);
+        doc = app.open(tpl);
 
-        // Use low-level action to open — works across all PS versions
-        var descOpen = new ActionDescriptor();
-        descOpen.putPath(charIDToTypeID("null"), templateFile);
-        descOpen.putBoolean(charIDToTypeID("Mnmz"), false);
-        executeAction(charIDToTypeID("Opn "), descOpen, DialogModes.NO);
-        doc = app.activeDocument;
-
+        // Process each zone
         var zones = job.zones;
         for (var z in zones) {
             if (!zones.hasOwnProperty(z)) continue;
             var zone = zones[z];
-            log("  Zone: " + z);
-            if (zone.customer_image) {
-                placeCustomerImage(doc, zone.customer_image, "CustomerImage_" + z);
-            }
-            if (zone.text_lines && zone.text_lines.length > 0) {
-                setTextLayer(doc, "CustomerText_" + z, zone.text_lines, zone.colour_hex, zone.font_name);
-            }
+            log("  Zone: "+z);
+            if (zone.customer_image) placeImage(doc, zone.customer_image, "CustomerImage_"+z);
+            if (zone.text_lines && zone.text_lines.length > 0)
+                setText(doc, "CustomerText_"+z, zone.text_lines, zone.colour_hex, zone.font_name);
         }
 
-        var outputFile  = new File(job.output_path);
-        var saveOpts    = new PhotoshopSaveOptions();
-        saveOpts.layers = true;
-        saveOpts.embedColorProfile = true;
-        doc.saveAs(outputFile, saveOpts, true);
-        log("  Saved: " + job.output_path);
+        // Save PSD
+        var out = new File(job.output_path);
+        var opts = new PhotoshopSaveOptions();
+        opts.layers = true;
+        opts.embedColorProfile = true;
+        doc.saveAs(out, opts, true);
+        log("  Saved: "+job.output_path);
+
         doc.close(SaveOptions.DONOTSAVECHANGES);
         doc = null;
 
-        writeResultFile(DONE_DIR, jobFile.name, {
-            order_id:     orderId,
-            output_path:  job.output_path,
-            completed_at: isoTimestamp()
-        });
-        jobFile.remove();
-        log("Done: " + orderId);
+        markDone(jobFile.name, orderId, job.output_path);
+        try { jobFile.remove(); } catch(x){}
+        log("Done: "+orderId);
 
     } catch(e) {
-        try { if (doc) doc.close(SaveOptions.DONOTSAVECHANGES); } catch(ig) {}
-        writeError(jobFile, orderId, e.message || String(e));
+        try { if(doc) doc.close(SaveOptions.DONOTSAVECHANGES); } catch(x){}
+        markError(jobFile.name, orderId, e.message || String(e));
+        try { jobFile.remove(); } catch(x){}
+        log("Error: "+orderId+" — "+e.message);
     }
 }
 
-// ── ONE-SHOT: process all pending jobs then exit ───────────────────────────────
-log("Varsany PS Worker — scanning jobs folder");
-
-// Give Photoshop 3 seconds to fully initialise if just launched
-$.sleep(3000);
-
-var jobFiles = JOBS_DIR.getFiles("*.json");
-if (jobFiles.length === 0) {
-    log("No pending jobs.");
+// ── Run ────────────────────────────────────────────────────────────────────────
+log("PS Worker start");
+var jobs = JOBS_DIR.getFiles("*.json");
+if (!jobs || jobs.length === 0) {
+    log("No jobs.");
 } else {
-    log("Found " + jobFiles.length + " job(s).");
-    jobFiles.sort(function(a, b) { return a.name < b.name ? -1 : 1; });
-    for (var ji = 0; ji < jobFiles.length; ji++) {
-        processJob(jobFiles[ji]);
-    }
+    log("Jobs found: "+jobs.length);
+    jobs.sort(function(a,b){ return a.name < b.name ? -1 : 1; });
+    for (var i = 0; i < jobs.length; i++) processJob(jobs[i]);
 }
-log("Worker finished.");
+log("PS Worker done.");

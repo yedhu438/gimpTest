@@ -1,156 +1,137 @@
 """
-ps_bridge.py — Varsany Photoshop Bridge
-========================================
-Submits print jobs to a running Photoshop worker (ps_worker.jsx) by dropping
-JSON job files into a hot folder.  Python does zero colour conversion — all
-ICC / ACE colour work is delegated to the real Adobe engine inside Photoshop.
+ps_bridge.py  —  Varsany Photoshop Bridge
+==========================================
+Python side of the Photoshop integration.
+1. submit_job()  — writes a JSON job file for Photoshop to pick up
+2. trigger_and_wait() — tells the open Photoshop to run ps_worker.jsx via COM, waits for result
 
-Usage (from batch_processor.py or prototype_app.py):
-    from ps_bridge import submit_job, wait_for_completion, ps_worker_running
-
-    submit_job(
-        order_id="204-0722247-8187513",
-        template_path="W:/VarsaniAutomation/templates/WmnTee_PnkXXL.psd",
-        zones={
-            "front": {
-                "customer_image": "C:/Varsany/Uploads/customer.png",
-                "text_lines":     ["Happy Birthday", "Emma!"],
-                "font_name":      "Bebas Neue",
-                "colour_hex":     "#FFFFFF",
-            },
-            "back": {
-                "text_lines": ["Est. 2024"],
-                "font_name":  "Arial Bold",
-                "colour_hex": "#FFD700",
-            }
-        },
-        output_path="C:/Varsany/Output/2026-05-26/204-0722247-8187513.psd",
-    )
-
-    success = wait_for_completion("204-0722247-8187513", timeout_sec=120)
+No pywin32 needed — uses a lightweight VBScript one-liner via cscript.exe.
+Photoshop must be open before calling trigger_and_wait().
 """
 
-import json
-import os
-import shutil
-import time
+import json, os, shutil, subprocess, time
 from datetime import datetime
 from pathlib import Path
 
-# ── Folder layout ─────────────────────────────────────────────────────────────
-# These paths live on the NAS (W:\) so both India and UK can share them.
-# Override with env vars if needed.
-_BRIDGE_ROOT = Path(os.environ.get(
-    "PS_BRIDGE_DIR",
-    r"C:\Varsany\photoshop_bridge"
-))
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+except ImportError:
+    pass
 
-JOBS_DIR   = _BRIDGE_ROOT / "jobs"          # Python writes jobs here
-ASSETS_DIR = _BRIDGE_ROOT / "assets"        # copied customer images
-DONE_DIR   = _BRIDGE_ROOT / "done"          # ps_worker.jsx moves completed jobs here
-ERROR_DIR  = _BRIDGE_ROOT / "error"         # ps_worker.jsx moves failed jobs here
+# ── Paths ──────────────────────────────────────────────────────────────────────
+_BRIDGE_ROOT = Path(os.environ.get("PS_BRIDGE_DIR", r"C:\Varsany\photoshop_bridge"))
+JOBS_DIR     = _BRIDGE_ROOT / "jobs"
+ASSETS_DIR   = _BRIDGE_ROOT / "assets"
+DONE_DIR     = _BRIDGE_ROOT / "done"
+ERROR_DIR    = _BRIDGE_ROOT / "error"
 
 for _d in (JOBS_DIR, ASSETS_DIR, DONE_DIR, ERROR_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
+JSX_PATH = str(Path(__file__).parent / "ps_worker.jsx")
 
-# ── Public API ─────────────────────────────────────────────────────────────────
-
-def submit_job(
-    order_id: str,
-    template_path: str,
-    zones: dict,
-    output_path: str,
-) -> Path:
+# ── Submit job ─────────────────────────────────────────────────────────────────
+def submit_job(order_id, template_path, zones, output_path):
     """
-    Build and drop a job JSON for ps_worker.jsx.
-
-    zones format:
-        {
-            "front": {
-                "customer_image": "<path or None>",   # optional
-                "text_lines":     ["line1", "line2"], # optional
-                "font_name":      "Bebas Neue",        # optional
-                "colour_hex":     "#FFFFFF",           # optional
-            },
-            "back":  { ... },   # optional
-            "pocket":{ ... },   # optional
-            "sleeve":{ ... },   # optional
-        }
-
-    Returns the Path to the expected output PSD.
+    Write a job JSON for Photoshop.
+    zones = {
+        "front": {
+            "customer_image": "C:/path/to/image.jpg",   # path on disk, or None
+            "text_lines":     ["Line 1", "Line 2"],      # list of strings, or []
+            "font_name":      "Arial Bold",
+            "colour_hex":     "#ffffff",
+        },
+        ...
+    }
     """
-    sanitised_zones = {}
-
-    for zone_name, zone_data in zones.items():
-        z = {}
-
-        # Copy customer image to shared assets folder so Photoshop can reach it
-        img_src = (zone_data.get("customer_image") or "").strip()
+    # Copy customer images to shared assets folder
+    clean_zones = {}
+    for zone_name, zone in zones.items():
+        img_src = (zone.get("customer_image") or "").strip()
         if img_src and os.path.isfile(img_src):
-            dest_name = f"{order_id}_{zone_name}_{Path(img_src).name}"
-            dest_path = ASSETS_DIR / dest_name
-            shutil.copy2(img_src, dest_path)
-            z["customer_image"] = str(dest_path)
+            dest = ASSETS_DIR / f"{order_id}_{zone_name}_{Path(img_src).name}"
+            shutil.copy2(img_src, dest)
+            img_path = str(dest)
         else:
-            z["customer_image"] = None
+            img_path = img_src if img_src else None
 
-        z["text_lines"] = zone_data.get("text_lines") or []
-        z["font_name"]  = zone_data.get("font_name")  or "Arial Bold"
-        z["colour_hex"] = zone_data.get("colour_hex") or "#FFFFFF"
-
-        sanitised_zones[zone_name] = z
+        clean_zones[zone_name] = {
+            "customer_image": img_path,
+            "text_lines":     zone.get("text_lines") or [],
+            "font_name":      zone.get("font_name") or "Arial Bold",
+            "colour_hex":     zone.get("colour_hex") or "#ffffff",
+        }
 
     job = {
         "order_id":     order_id,
         "template":     str(template_path),
-        "zones":        sanitised_zones,
+        "zones":        clean_zones,
         "output_path":  str(output_path),
         "submitted_at": datetime.now().isoformat(),
     }
 
-    # Ensure output directory exists (Photoshop won't create it)
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-
     job_file = JOBS_DIR / f"{order_id}.json"
     job_file.write_text(json.dumps(job, indent=2), encoding="utf-8")
+    print(f"[PS Bridge] Job submitted: {order_id}")
     return Path(output_path)
 
 
-def wait_for_completion(order_id: str, timeout_sec: int = 120) -> bool:
+# ── Trigger Photoshop via VBScript COM ─────────────────────────────────────────
+def _trigger_photoshop():
     """
-    Submit job then launch Photoshop to process it, wait for completion.
+    Tell the open Photoshop to run ps_worker.jsx using a VBScript one-liner.
+    No pywin32 needed — cscript.exe is built into Windows.
+    """
+    vbs = (
+        'Dim ps : Set ps = CreateObject("Photoshop.Application") : '
+        'ps.DoJavaScriptFile "' + JSX_PATH.replace("\\", "\\\\") + '"'
+    )
+    try:
+        subprocess.Popen(
+            ["cscript", "//Nologo", "//E:vbscript", "//B", "-"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).communicate(input=vbs.encode())
+        return True
+    except Exception as e:
+        print(f"[PS Bridge] VBScript trigger failed: {e}")
+        return False
+
+
+# ── Wait for result ────────────────────────────────────────────────────────────
+def wait_for_completion(order_id, timeout_sec=180):
+    """
+    Trigger Photoshop, then poll until job is done or errors.
     Returns True on success, False on error or timeout.
     """
     done_file  = DONE_DIR  / f"{order_id}.json"
     error_file = ERROR_DIR / f"{order_id}.json"
 
-    # Trigger the already-open Photoshop to run the worker script via COM
-    jsx = Path(__file__).parent / "ps_worker.jsx"
-    if jsx.exists():
-        _trigger_ps_script(str(jsx))
-        time.sleep(3)  # give PS time to start processing
+    _trigger_photoshop()
 
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
         if done_file.exists():
+            print(f"[PS Bridge] Done: {order_id}")
             return True
         if error_file.exists():
-            _log_error(error_file)
+            try:
+                data = json.loads(error_file.read_text(encoding="utf-8"))
+                print(f"[PS Bridge] Error: {data.get('error','unknown')}")
+            except Exception:
+                pass
             return False
         time.sleep(2)
 
-    print(f"[PS Bridge] TIMEOUT waiting for order {order_id}")
+    print(f"[PS Bridge] Timeout: {order_id}")
     return False
 
 
-def ps_worker_running() -> bool:
-    """
-    Return True if at least one Photoshop process is alive.
-    Useful to decide whether to fall back to the Python PSD writer.
-    """
+def ps_worker_running():
     try:
-        import subprocess
         result = subprocess.run(
             ["tasklist", "/FI", "IMAGENAME eq Photoshop.exe", "/NH"],
             capture_output=True, text=True, timeout=5
@@ -158,71 +139,3 @@ def ps_worker_running() -> bool:
         return "Photoshop.exe" in result.stdout
     except Exception:
         return False
-
-
-def start_ps_worker(jsx_path: str | None = None) -> None:
-    """
-    Launch Photoshop with the ps_worker.jsx script if it isn't already running.
-    Call once at application startup (batch_processor.py or prototype_app.py).
-    """
-    if ps_worker_running():
-        print("[PS Bridge] Photoshop worker already running.")
-        return
-
-    ps_exe = _find_photoshop()
-    if not ps_exe:
-        print("[PS Bridge] WARNING: Photoshop not found — cannot start worker.")
-        return
-
-    script = jsx_path or str(Path(__file__).parent / "ps_worker.jsx")
-    if not os.path.isfile(script):
-        print(f"[PS Bridge] WARNING: ps_worker.jsx not found at {script}")
-        return
-
-    import subprocess
-    subprocess.Popen([ps_exe, script])
-    print(f"[PS Bridge] Photoshop worker launched ({ps_exe})")
-
-
-# ── Internal helpers ───────────────────────────────────────────────────────────
-
-def _trigger_ps_script(jsx_path: str) -> bool:
-    """
-    Tell the already-open Photoshop to run a JSX script via Windows COM.
-    Requires Photoshop to be open. Returns True if triggered successfully.
-    """
-    try:
-        import win32com.client
-        ps = win32com.client.Dispatch("Photoshop.Application")
-        ps.DoJavaScriptFile(jsx_path)
-        return True
-    except ImportError:
-        print("[PS Bridge] pywin32 not installed — install with: pip install pywin32")
-    except Exception as e:
-        print(f"[PS Bridge] COM trigger failed: {e}")
-    return False
-
-
-def _find_photoshop() -> str | None:
-    """Find the Photoshop executable on this machine."""
-    candidates = []
-    adobe_root = r"C:\Program Files\Adobe"
-    if os.path.isdir(adobe_root):
-        for folder in sorted(os.listdir(adobe_root), reverse=True):
-            if "Photoshop" in folder:
-                candidates.append(
-                    os.path.join(adobe_root, folder, "Photoshop.exe")
-                )
-    for p in candidates:
-        if os.path.isfile(p):
-            return p
-    return None
-
-
-def _log_error(error_file: Path) -> None:
-    try:
-        data = json.loads(error_file.read_text(encoding="utf-8"))
-        print(f"[PS Bridge] ERROR — order {data.get('order_id')}: "
-              f"{data.get('error', 'unknown error')}")
-    except Exception:
-        print(f"[PS Bridge] ERROR — could not read {error_file}")
