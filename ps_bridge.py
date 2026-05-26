@@ -125,12 +125,11 @@ def wait_for_completion(order_id: str, timeout_sec: int = 120) -> bool:
     done_file  = DONE_DIR  / f"{order_id}.json"
     error_file = ERROR_DIR / f"{order_id}.json"
 
-    # Launch Photoshop with the worker script to process pending jobs
+    # Trigger the already-open Photoshop to run the worker script via COM
     jsx = Path(__file__).parent / "ps_worker.jsx"
-    ps  = _find_photoshop()
-    if ps and jsx.exists():
-        import subprocess
-        subprocess.Popen([ps, str(jsx)])
+    if jsx.exists():
+        _trigger_ps_script(str(jsx))
+        time.sleep(3)  # give PS time to start processing
 
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
@@ -186,6 +185,23 @@ def start_ps_worker(jsx_path: str | None = None) -> None:
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
+
+def _trigger_ps_script(jsx_path: str) -> bool:
+    """
+    Tell the already-open Photoshop to run a JSX script via Windows COM.
+    Requires Photoshop to be open. Returns True if triggered successfully.
+    """
+    try:
+        import win32com.client
+        ps = win32com.client.Dispatch("Photoshop.Application")
+        ps.DoJavaScriptFile(jsx_path)
+        return True
+    except ImportError:
+        print("[PS Bridge] pywin32 not installed — install with: pip install pywin32")
+    except Exception as e:
+        print(f"[PS Bridge] COM trigger failed: {e}")
+    return False
+
 
 def _find_photoshop() -> str | None:
     """Find the Photoshop executable on this machine."""

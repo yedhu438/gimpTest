@@ -195,6 +195,10 @@ function processJob(jobFile) {
 
 // ── ONE-SHOT: process all pending jobs then exit ───────────────────────────────
 log("Varsany PS Worker — scanning jobs folder");
+
+// Give Photoshop 3 seconds to fully initialise if just launched
+$.sleep(3000);
+
 var jobFiles = JOBS_DIR.getFiles("*.json");
 if (jobFiles.length === 0) {
     log("No pending jobs.");
