@@ -22,8 +22,15 @@ var ERROR_DIR = new Folder("C:/Varsany/photoshop_bridge/error");
 var POLL_MS   = 2000;  // polling interval
 
 // ── Logging ────────────────────────────────────────────────────────────────────
+function isoTimestamp() {
+    var d = new Date();
+    function pad(n) { return n < 10 ? "0" + n : String(n); }
+    return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate()) +
+           "T" + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
+}
+
 function log(msg) {
-    $.writeln("[" + new Date().toLocaleTimeString() + "] " + msg);
+    $.writeln("[" + isoTimestamp() + "] " + msg);
 }
 
 // ── JSON reader (safe eval for internal files only) ────────────────────────────
@@ -50,7 +57,7 @@ function writeError(jobFile, job, errorMsg) {
     var result = {
         order_id:   job ? job.order_id : jobFile.name,
         error:      errorMsg,
-        failed_at:  new Date().toISOString()
+        failed_at:  isoTimestamp()
     };
     var outFile = new File(ERROR_DIR.fsName + "/" + jobFile.name);
     outFile.encoding = "UTF-8";
@@ -221,7 +228,7 @@ function processJob(jobFile) {
         var doneData = {
             order_id:     job.order_id,
             output_path:  job.output_path,
-            completed_at: new Date().toISOString()
+            completed_at: isoTimestamp()
         };
         var doneFile = new File(DONE_DIR.fsName + "/" + jobFile.name);
         doneFile.encoding = "UTF-8";
