@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #2b2b2b;
+      color: #ccc;
+      margin: 0;
+      padding: 10px;
+      font-size: 12px;
+    }
+    #status {
+      color: #7ec87e;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+    #log {
+      font-size: 10px;
+      color: #aaa;
+      max-height: 60px;
+      overflow-y: auto;
+    }
+    .dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #7ec87e;
+      margin-right: 5px;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  </style>
+</head>
+<body>
+  <div id="status"><span class="dot"></span>Watching for orders...</div>
+  <div id="log"></div>
+  <script src="index.js"></script>
+</body>
+</html>

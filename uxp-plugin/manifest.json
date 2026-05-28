@@ -1,0 +1,23 @@
+{
+  "id": "com.varsany.automation.worker",
+  "name": "Varsany Order Processor",
+  "version": "1.0.0",
+  "description": "Automatically processes Varsany print orders from the jobs folder",
+  "host": {
+    "app": "PS",
+    "minVersion": "24.0"
+  },
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "varsany-panel",
+      "label": "Varsany Orders",
+      "minimumSize": { "width": 200, "height": 100 },
+      "preferredDockedSize": { "width": 220, "height": 140 }
+    }
+  ],
+  "permissions": {
+    "localFileSystem": "fullAccess",
+    "allowCodeGenerationFromStrings": true
+  }
+}
