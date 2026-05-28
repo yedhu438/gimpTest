@@ -50,9 +50,11 @@ def submit_job(order_id, template_path, zones, output_path):
     for zone_name, zone in zones.items():
         img_src = (zone.get("customer_image") or "").strip()
         if img_src and os.path.isfile(img_src):
-            dest = ASSETS_DIR / f"{order_id}_{zone_name}_{Path(img_src).name}"
+            # Copy to plugin data images folder using just the original filename
+            img_filename = Path(img_src).name
+            dest = ASSETS_DIR / img_filename
             shutil.copy2(img_src, dest)
-            img_path = str(dest)
+            img_path = img_filename  # just filename — plugin looks it up by name
         else:
             img_path = img_src if img_src else None
 
