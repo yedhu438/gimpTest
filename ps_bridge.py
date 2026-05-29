@@ -32,7 +32,7 @@ for _d in (JOBS_DIR, ASSETS_DIR, DONE_DIR, ERROR_DIR):
 JSX_PATH = str(Path(__file__).parent / "ps_worker.jsx")
 
 # ── Submit job ─────────────────────────────────────────────────────────────────
-def submit_job(order_id, template_path, zones, output_path):
+def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, canvas_h_px=3780):
     """
     Write a job JSON for Photoshop.
     zones = {
@@ -70,6 +70,9 @@ def submit_job(order_id, template_path, zones, output_path):
         "template":     str(template_path),
         "zones":        clean_zones,
         "output_path":  str(output_path),
+        "canvas_w_px":  canvas_w_px,
+        "canvas_h_px":  canvas_h_px,
+        "dpi":          320,
         "submitted_at": datetime.now().isoformat(),
     }
 

@@ -15,14 +15,18 @@
 <div id="log"></div>
 <script>
 const {app,core,action,constants} = require("photoshop");
-const uxp   = require("uxp");
-const fs    = uxp.storage.localFileSystem;
+const uxp = require("uxp");
+const fs  = uxp.storage.localFileSystem;
 
 const POLL_MS = 3000;
 let DATA_FOLDER=null, JOBS_FOLDER=null, DONE_FOLDER=null, ERROR_FOLDER=null;
 let processing = false;
 
-function ts(){const d=new Date(),p=n=>String(n).padStart(2,"0");return`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function ts(){
+  const d=new Date(), p=n=>String(n).padStart(2,"0");
+  return`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
 
 function log(msg,isErr){
   console.log("[Varsany] "+msg);
@@ -30,7 +34,7 @@ function log(msg,isErr){
   if(!isErr) document.getElementById("status").innerHTML='<span class="dot"></span>'+msg;
 }
 
-async function getOrCreate(parent, name){
+async function getOrCreate(parent,name){
   try{return await parent.getEntry(name);}
   catch(e){return await parent.createFolder(name);}
 }
@@ -53,76 +57,32 @@ async function writeJSON(folder,filename,data){
   await f.write(JSON.stringify(data,null,2),{format:uxp.storage.formats.utf8});
 }
 
-// Get a session token for a file inside the plugin data folder
-// filePath is relative to DATA_FOLDER, e.g. "templates/adulttshirt.psd"
-async function tokenForRelPath(relPath){
-  const parts = relPath.replace(/\\/g,"/").split("/");
+// ── Get entry by relative path from DATA_FOLDER ────────────────────────────────
+async function getDataEntry(relPath){
+  const parts = relPath.replace(/\\/g,"/").split("/").filter(Boolean);
   let entry = DATA_FOLDER;
   for(const part of parts) entry = await entry.getEntry(part);
-  return fs.createSessionToken(entry);
+  return entry;
 }
 
-async function tokenForImage(imgPath){
-  // imgPath may be a full path or just a filename
-  // Images are copied to plugin-data/images/ by ps_bridge.py
-  // The filename in images/ folder may have an order_id prefix
+// ── Find image entry — searches images/ folder by filename ────────────────────
+async function getImageEntry(imgPath){
+  const baseName = imgPath.replace(/\\/g,"/").split("/").pop();
   const imagesFolder = await getOrCreate(DATA_FOLDER,"images");
   const entries = await imagesFolder.getEntries();
-  // Try exact filename first
-  const baseName = imgPath.replace(/\\/g,"/").split("/").pop();
-  // Find any entry whose name ends with the base filename
   const match = entries.find(e => e.name === baseName || e.name.endsWith("_"+baseName));
-  if(!match) throw new Error("Image not found in images folder: "+baseName);
-  return fs.createSessionToken(match);
+  if(!match) throw new Error("Image not found: "+baseName);
+  return match;
 }
 
-// Get session token for output file (creates it if needed)
-async function tokenForOutput(outputFilename){
+// ── Get or create output file entry ──────────────────────────────────────────
+async function getOutputEntry(filename){
   const outFolder = await getOrCreate(DATA_FOLDER,"output");
-  let outEntry;
-  try{ outEntry = await outFolder.getEntry(outputFilename); }
-  catch(e){ outEntry = await outFolder.createFile(outputFilename,{overwrite:true}); }
-  return fs.createSessionToken(outEntry);
+  try{ return await outFolder.getEntry(filename); }
+  catch(e){ return await outFolder.createFile(filename,{overwrite:true}); }
 }
 
-async function openWithToken(token){
-  await core.executeAsModal(async()=>{
-    await action.batchPlay([{
-      _obj:"open",
-      null:{_path:token,_kind:"local"},
-      _options:{dialogOptions:"dontDisplay"}
-    }],{synchronousExecution:true});
-  },{commandName:"Open template"});
-  return app.activeDocument;
-}
-
-async function saveWithToken(token){
-  await core.executeAsModal(async()=>{
-    await action.batchPlay([{
-      _obj:"save",
-      null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"document"}]},
-      in:{_path:token,_kind:"local"},
-      as:{_obj:"photoshop35Format",embedProfiles:true}
-    }],{synchronousExecution:true});
-  },{commandName:"Save PSD"});
-}
-
-async function placeImageWithToken(token,layerName){
-  try{
-    await action.batchPlay([{
-      _obj:"placeEvent",
-      null:{_path:token,_kind:"local"},
-      freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}
-    }],{synchronousExecution:true});
-    app.activeDocument.activeLayer.name = layerName;
-    await action.batchPlay([{
-      _obj:"rasterizeLayer",
-      null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}
-    }],{synchronousExecution:true});
-    log("Placed: "+layerName);
-  }catch(e){log("Place error: "+e.message,true);}
-}
-
+// ── Find layer recursively ────────────────────────────────────────────────────
 function findLayer(layers,name){
   for(const l of layers){
     if(l.name===name) return l;
@@ -131,91 +91,217 @@ function findLayer(layers,name){
   return null;
 }
 
-async function setTextLayer(doc,layerName,lines,hex,font){
-  const layer=findLayer(doc.layers,layerName);
-  if(!layer){log("Layer not found: "+layerName,true);return;}
-  await core.executeAsModal(async()=>{
-    layer.textItem.contents=lines.join("\n");
-    if(hex?.startsWith("#")) layer.textItem.color={red:parseInt(hex.slice(1,3),16),green:parseInt(hex.slice(3,5),16),blue:parseInt(hex.slice(5,7),16)};
-    if(font) try{layer.textItem.font=font;}catch(e){}
-  },{commandName:"Set text"});
-}
-
+// ── Process one job — ALL Photoshop ops inside single executeAsModal ──────────
 async function processJob(jobEntry){
-  let job,orderId=jobEntry.name.replace(".json","");
-  try{job=await readJSON(jobEntry);orderId=job.order_id||orderId;}
-  catch(e){
-    await writeJSON(ERROR_FOLDER,jobEntry.name,{order_id:orderId,error:"Parse: "+e.message,failed_at:ts()});
-    await jobEntry.delete();return;
+  let job, orderId = jobEntry.name.replace(".json","");
+
+  try{
+    job = await readJSON(jobEntry);
+    orderId = job.order_id || orderId;
+  }catch(e){
+    await writeJSON(ERROR_FOLDER, jobEntry.name, {order_id:orderId, error:"Parse: "+e.message, failed_at:ts()});
+    await jobEntry.delete();
+    return;
   }
 
   log("Processing: "+orderId);
 
-  await core.executeAsModal(async()=>{
-    let doc=null;
-    try{
-      const tplName=job.template.replace(/\\/g,"/").split("/").pop();
-      const tplToken=await tokenForRelPath("templates/"+tplName);
-      await action.batchPlay([{_obj:"open",null:{_path:tplToken,_kind:"local"},_options:{dialogOptions:"dontDisplay"}}],{synchronousExecution:true});
-      doc=app.activeDocument;
+  // ── Pre-resolve ALL file entries BEFORE entering modal scope ─────────────
+  // Entries are resolved here; tokens are created INSIDE modal scope
+  let tplEntry, imgEntries={}, outEntry;
+  try{
+    const tplName = job.template.replace(/\\/g,"/").split("/").pop();
+    tplEntry = await getDataEntry("templates/"+tplName);
 
+    for(const [zone,data] of Object.entries(job.zones)){
+      if(data.customer_image){
+        const imgEntry = await getImageEntry(data.customer_image);
+        imgEntries[zone] = imgEntry;
+      }
+    }
+
+    const outName = job.output_path.replace(/\\/g,"/").split("/").pop();
+    outEntry = await getOutputEntry(outName);
+
+  }catch(e){
+    await writeJSON(ERROR_FOLDER, jobEntry.name, {order_id:orderId, error:"File lookup: "+e.message, failed_at:ts()});
+    await jobEntry.delete();
+    return;
+  }
+
+  // ── All Photoshop operations inside ONE executeAsModal ────────────────────
+  // Tokens are created and used immediately inside modal — they don't expire
+  let success = false;
+  let errorMsg = "";
+
+  await core.executeAsModal(async()=>{
+    let doc = null;
+    try{
+      // 1. Open template
+      const tplToken = fs.createSessionToken(tplEntry);
+      await action.batchPlay([{
+        _obj:"open",
+        null:{_path:tplToken,_kind:"local"},
+        _options:{dialogOptions:"dontDisplay"}
+      }],{synchronousExecution:true});
+      doc = app.activeDocument;
+      log("Opened: "+doc.name);
+
+      // 2. Process each zone
       for(const [zone,data] of Object.entries(job.zones)){
-        if(data.customer_image){
-          const imgName=data.customer_image.replace(/\\/g,"/").split("/").pop();
-          const imgToken=await tokenForImage(imgName);
+        // Place image — token created and used immediately
+        if(imgEntries[zone]){
           try{
-            await action.batchPlay([{_obj:"placeEvent",null:{_path:imgToken,_kind:"local"},freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}}],{synchronousExecution:true});
-            app.activeDocument.activeLayer.name="CustomerImage_"+zone;
-            await action.batchPlay([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}],{synchronousExecution:true});
+            const imgToken = fs.createSessionToken(imgEntries[zone]);
+            await action.batchPlay([{
+              _obj:"placeEvent",
+              null:{_path:imgToken,_kind:"local"},
+              freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}
+            }],{synchronousExecution:true});
+            await action.batchPlay([{
+              _obj:"rasterizeLayer",
+              null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}
+            }],{synchronousExecution:true});
             log("Placed image: "+zone);
-          }catch(e){log("Place error: "+e.message,true);}
+          }catch(e){ log("Place error ("+zone+"): "+e.message, true); }
         }
+
+        // Set text layer
         if(data.text_lines?.length){
-          const layer=findLayer(doc.layers,"CustomerText_"+zone);
-          if(layer){
-            layer.textItem.contents=data.text_lines.join("\n");
-            if(data.colour_hex?.startsWith("#")) layer.textItem.color={red:parseInt(data.colour_hex.slice(1,3),16),green:parseInt(data.colour_hex.slice(3,5),16),blue:parseInt(data.colour_hex.slice(5,7),16)};
-            if(data.font_name) try{layer.textItem.font=data.font_name;}catch(e){}
-            log("Text set: "+zone);
+          const layer = findLayer(doc.layers, "CustomerText_"+zone);
+          if(layer && layer.kind === "text"){
+            const text = data.text_lines.join("\n");
+            // Calculate font size in points from canvas width and DPI
+            // Target: text fills ~80% of canvas width for longest line
+            const canvasWpx  = job.canvas_w_px || doc.width;
+            const dpi        = job.dpi || 320;
+            const pxPerPoint = dpi / 72;
+            const longestLine = data.text_lines.reduce((a,b) => a.length > b.length ? a : b, "");
+            const charCount  = Math.max(longestLine.length, 1);
+            // Empirical: Arial Bold average char width ≈ 0.55 × font size
+            const targetPx   = canvasWpx * 0.80;
+            const fontSizePt = Math.round((targetPx / charCount / 0.55) / pxPerPoint);
+            const clampedPt  = Math.min(Math.max(fontSizePt, 20), 400);
+            const hex = data.colour_hex || "#ffffff";
+            const r = parseInt(hex.slice(1,3),16);
+            const g = parseInt(hex.slice(3,5),16);
+            const b = parseInt(hex.slice(5,7),16);
+            await action.batchPlay([{
+              _obj: "set",
+              null: { _ref: [{ _ref: "layer", _name: "CustomerText_"+zone }] },
+              to: {
+                _obj: "textLayer",
+                textKey: text,
+                textStyleRange: [{
+                  _obj: "textStyleRange",
+                  from: 0,
+                  to: text.length,
+                  textStyle: {
+                    _obj: "textStyle",
+                    size: { _unit: "pointsUnit", _value: clampedPt },
+                    color: { _obj: "RGBColor", red: r, grain: g, blue: b }
+                  }
+                }],
+                paragraphStyleRange: [{
+                  _obj: "paragraphStyleRange",
+                  from: 0,
+                  to: text.length,
+                  paragraphStyle: {
+                    _obj: "paragraphStyle",
+                    alignment: { _enum: "alignmentType", _value: "center" }
+                  }
+                }]
+              }
+            }],{synchronousExecution:true});
+            // Move text layer to top
+            await action.batchPlay([{
+              _obj: "move",
+              null: { _ref: [{ _ref: "layer", _name: "CustomerText_"+zone }] },
+              to: { _ref: [{ _enum: "ordinal", _value: "front", _ref: "layer" }] }
+            }],{synchronousExecution:true});
+            // Centre horizontally and vertically on canvas
+            await action.batchPlay([{
+              _obj: "align",
+              null: { _ref: [{ _enum: "ordinal", _value: "targetEnum", _ref: "layer" }] },
+              using: { _enum: "alignDistributeSelector", _value: "ADSCentersH" },
+              alignToCanvas: true
+            }],{synchronousExecution:true});
+            await action.batchPlay([{
+              _obj: "align",
+              null: { _ref: [{ _enum: "ordinal", _value: "targetEnum", _ref: "layer" }] },
+              using: { _enum: "alignDistributeSelector", _value: "ADSCentersV" },
+              alignToCanvas: true
+            }],{synchronousExecution:true});
+            log("Text set: "+zone+" ("+clampedPt+"pt)");
+          } else {
+            log("Text layer not found: CustomerText_"+zone, true);
           }
         }
       }
 
-      const outName=job.output_path.replace(/\\/g,"/").split("/").pop();
-      const outToken=await tokenForOutput(outName);
-      await action.batchPlay([{_obj:"save",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"document"}]},in:{_path:outToken,_kind:"local"},as:{_obj:"photoshop35Format",embedProfiles:true}}],{synchronousExecution:true});
-      log("Saved: "+outName);
-      await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
-      doc=null;
+      // 3. Save PSD — token created and used immediately
+      const outToken = fs.createSessionToken(outEntry);
+      await action.batchPlay([{
+        _obj:"save",
+        null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"document"}]},
+        in:{_path:outToken,_kind:"local"},
+        as:{_obj:"photoshop35Format",embedProfiles:true}
+      }],{synchronousExecution:true});
+      log("Saved: "+outEntry.name);
 
-      await writeJSON(DONE_FOLDER,jobEntry.name,{order_id:orderId,output_filename:outName,completed_at:ts()});
-      await jobEntry.delete();
-      log("Done: "+orderId);
+      // 4. Close
+      await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
+      doc = null;
+      success = true;
 
     }catch(e){
+      errorMsg = e.message || String(e);
       if(doc) try{await doc.close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}
-      await writeJSON(ERROR_FOLDER,jobEntry.name,{order_id:orderId,error:e.message||String(e),failed_at:ts()});
-      try{await jobEntry.delete();}catch(x){}
-      log("Error: "+orderId+" — "+(e.message||e),true);
     }
-  },{commandName:"Process order "+orderId});
+  },{commandName:"Process "+orderId});
+
+  // ── Write result outside modal scope ─────────────────────────────────────
+  if(success){
+    await writeJSON(DONE_FOLDER, jobEntry.name, {
+      order_id: orderId,
+      output_filename: outEntry.name,
+      completed_at: ts()
+    });
+    await jobEntry.delete();
+    log("Done: "+orderId);
+  } else {
+    await writeJSON(ERROR_FOLDER, jobEntry.name, {
+      order_id: orderId,
+      error: errorMsg,
+      failed_at: ts()
+    });
+    try{await jobEntry.delete();}catch(x){}
+    log("Error: "+orderId+" — "+errorMsg, true);
+  }
 }
 
+// ── Poll loop ─────────────────────────────────────────────────────────────────
 async function pollJobs(){
-  if(processing||!JOBS_FOLDER) return;
-  processing=true;
+  if(processing || !JOBS_FOLDER) return;
+  processing = true;
   try{
-    const entries=await JOBS_FOLDER.getEntries();
-    const jobs=entries.filter(e=>e.name.endsWith(".json")).sort((a,b)=>a.name<b.name?-1:1);
-    if(jobs.length>0){log("Found "+jobs.length+" job(s)");await processJob(jobs[0]);}
-  }catch(e){log("Poll error: "+e.message,true);}
-  processing=false;
+    const entries = await JOBS_FOLDER.getEntries();
+    const jobs = entries
+      .filter(e => e.name.endsWith(".json"))
+      .sort((a,b) => a.name < b.name ? -1 : 1);
+    if(jobs.length > 0){
+      log("Found "+jobs.length+" job(s)");
+      await processJob(jobs[0]);
+    }
+  }catch(e){ log("Poll error: "+e.message, true); }
+  processing = false;
 }
 
+// ── Start ─────────────────────────────────────────────────────────────────────
 initFolders().then(()=>{
-  setInterval(pollJobs,POLL_MS);
+  setInterval(pollJobs, POLL_MS);
   log("Varsany worker polling every "+(POLL_MS/1000)+"s");
-}).catch(e=>log("Init error: "+e.message,true));
+}).catch(e => log("Init error: "+e.message, true));
 </script>
 </body>
 </html>
