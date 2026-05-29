@@ -161,7 +161,39 @@ async function processJob(jobEntry){
               null:{_path:imgToken,_kind:"local"},
               freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}
             }],{synchronousExecution:true});
-            log("Placed image (smart object): "+zone);
+
+            // Fit-and-trim: scale the image proportionally (no distortion) until
+            // it touches a canvas edge, then trim the leftover blank canvas so the
+            // print file is exactly the artwork. Up- or down-scales as needed.
+            const placed  = doc.activeLayers[0];        // the just-placed smart object
+            const pb      = placed.bounds;
+            const imgW    = Number(pb.right - pb.left) || 1;
+            const imgH    = Number(pb.bottom - pb.top) || 1;
+            const canvasW = Number(doc.width);
+            const canvasH = Number(doc.height);
+            const scale   = Math.min(canvasW / imgW, canvasH / imgH);
+
+            if(Math.abs(scale - 1) > 0.001){
+              await action.batchPlay([{
+                _obj:"transform",
+                _target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],
+                freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"},
+                offset:{_obj:"offset",horizontal:{_unit:"pixelsUnit",_value:0},vertical:{_unit:"pixelsUnit",_value:0}},
+                width: {_unit:"percentUnit",_value:scale*100},
+                height:{_unit:"percentUnit",_value:scale*100}
+              }],{synchronousExecution:true});
+            }
+
+            const sw = Math.round(imgW * scale);
+            const sh = Math.round(imgH * scale);
+            await action.batchPlay([{
+              _obj:"canvasSize",
+              width: {_unit:"pixelsUnit",_value:sw},
+              height:{_unit:"pixelsUnit",_value:sh},
+              horizontal:{_enum:"horizontalLocation",_value:"center"},
+              vertical:  {_enum:"verticalLocation",_value:"center"}
+            }],{synchronousExecution:true});
+            log("Placed + fit image: "+zone+" ("+sw+"x"+sh+")");
           }catch(e){ log("Place error ("+zone+"): "+e.message, true); }
         }
 
@@ -171,7 +203,9 @@ async function processJob(jobEntry){
           if(layer && layer.kind === "text"){
             const text = data.text_lines.join("\n");
             // Target: longest text line fills ~80% of canvas width.
-            const canvasWpx = job.canvas_w_px || doc.width;
+            // Use the CURRENT doc width (post image fit-and-trim), so text is
+            // sized to the final canvas — falls back to the job's value.
+            const canvasWpx = Number(doc.width) || job.canvas_w_px;
             const targetPx  = canvasWpx * 0.80;
             const hex = data.colour_hex || "#ffffff";
             const r = parseInt(hex.slice(1,3),16);
@@ -233,20 +267,46 @@ async function processJob(jobEntry){
               null: { _ref: [{ _ref: "layer", _name: "CustomerText_"+zone }] },
               to: { _ref: [{ _enum: "ordinal", _value: "front", _ref: "layer" }] }
             }],{synchronousExecution:true});
-            // Centre horizontally and vertically on canvas
+
+            // Always centre horizontally on the canvas.
             await action.batchPlay([{
               _obj: "align",
               null: { _ref: [{ _enum: "ordinal", _value: "targetEnum", _ref: "layer" }] },
               using: { _enum: "alignDistributeSelector", _value: "ADSCentersH" },
               alignToCanvas: true
             }],{synchronousExecution:true});
-            await action.batchPlay([{
-              _obj: "align",
-              null: { _ref: [{ _enum: "ordinal", _value: "targetEnum", _ref: "layer" }] },
-              using: { _enum: "alignDistributeSelector", _value: "ADSCentersV" },
-              alignToCanvas: true
-            }],{synchronousExecution:true});
-            log("Text set: "+zone+" ("+clampedPt+"pt)");
+
+            if(imgEntries[zone]){
+              // DEFAULT for image+text: overlay the text on the BOTTOM of the
+              // image. No canvas growth — the text sits over the lower part of
+              // the artwork (overlap is intentional, so it's visible). The text
+              // layer stays on top and editable for tweaks before ripping.
+              await action.batchPlay([{
+                _obj: "align",
+                null: { _ref: [{ _enum: "ordinal", _value: "targetEnum", _ref: "layer" }] },
+                using: { _enum: "alignDistributeSelector", _value: "ADSBottoms" },
+                alignToCanvas: true
+              }],{synchronousExecution:true});
+              // Nudge up a small margin so glyphs aren't flush against the edge.
+              const margin = Math.round(Number(doc.height) * 0.04);
+              if(margin > 0){
+                await action.batchPlay([{
+                  _obj:"move",
+                  _target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],
+                  to:{_obj:"offset",horizontal:{_unit:"pixelsUnit",_value:0},vertical:{_unit:"pixelsUnit",_value:-margin}}
+                }],{synchronousExecution:true});
+              }
+              log("Text on image bottom: "+zone+" ("+clampedPt+"pt)");
+            } else {
+              // Text-only zone: centre vertically on the canvas as well.
+              await action.batchPlay([{
+                _obj: "align",
+                null: { _ref: [{ _enum: "ordinal", _value: "targetEnum", _ref: "layer" }] },
+                using: { _enum: "alignDistributeSelector", _value: "ADSCentersV" },
+                alignToCanvas: true
+              }],{synchronousExecution:true});
+              log("Text set: "+zone+" ("+clampedPt+"pt)");
+            }
           } else {
             log("Text layer not found: CustomerText_"+zone, true);
           }
