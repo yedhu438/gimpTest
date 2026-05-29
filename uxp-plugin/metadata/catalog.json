@@ -1,0 +1,548 @@
+{
+  "_meta": {
+    "description": "Single source of truth for Varsany DTF print templates. PSD templates + this metadata drive placement; Python no longer renders.",
+    "generated_by": "build_metadata.py",
+    "source": "v4/batch_processor.py (PRODUCT_CANVAS, SKU_MAP) + CLAUDE.md",
+    "resolution_note": "Authoritative resolution = 320 Pixels/Inch, units cm (owner's PS New Document dialog). Formula: px = round(cm / 2.54 * 320) (30 cm = 3780 px). v4 cm_to_px (320/2.54) is CORRECT; the CLAUDE.md '320 px/cm / 9600x9600' claim is wrong.",
+    "conflicts": [
+      "RESOLUTION: resolved via PS dialog -> 320 ppi in cm (30cm=3780px). v4 cm_to_px is right; CLAUDE.md 9600px is wrong.",
+      "Size fixes from PS presets: kidstshirt 23x30 -> 22x30; buckethat 18x5 -> 11x5; memorialplaque 13x8 -> 14x9.",
+      "knittingbag renamed -> jutebag (25x21) per owner.",
+      "Pocket size: PRODUCT_CANVAS code = 9x9 cm; CLAUDE.md table = 9x7 cm. Using code (9x9), not in PS presets.",
+      "Product keys differ: PRODUCT_CANVAS uses adulthoodie/adulttshirt; CLAUDE.md TEMPLATE_MAP uses hoodie/tshirt. v4 has NO template map (renders from scratch)."
+    ],
+    "unknowns_require_confirmation": [
+      "5 of 20 PS presets were below the fold \u2014 sizes for makeupbag/shoebag/shoebag2/beanie/seatbelt/sleepsuit/hodieblanket/cushion/golfcase/slipper are v4-legacy (size_source='v4_legacy').",
+      "New presets 'kiddo' (16x16) and 'book' (15x15) have no SKU prefix in sku_map yet.",
+      "back/pocket/sleeve sizes are v4-derived (presets only confirm the front canvas).",
+      "Exact PSD template filenames (psd_file fields are UNCONFIRMED).",
+      "Real layer names inside each template (target contract assumed: ARTWORK_*/TEXT_*).",
+      "Smart-object placeholder names and the safe-area inset within each canvas (safe_area/text zone default to full canvas until PSDs are inspected)."
+    ]
+  },
+  "photoshop_document": {
+    "resolution": 320,
+    "resolution_unit": "Pixels/Inch",
+    "units": "Centimeters",
+    "color_mode": "CMYK Color",
+    "bit_depth": 8,
+    "background": "Transparent",
+    "color_profile": "U.S. Web Coated (SWOP) v2",
+    "pixel_aspect_ratio": "Square Pixels"
+  },
+  "global": {
+    "psb_threshold_bytes": 2147483648,
+    "text_max_width_percent": 0.8
+  },
+  "layer_contract": {
+    "artwork": {
+      "front": "ARTWORK_FRONT",
+      "back": "ARTWORK_BACK",
+      "sleeve": "ARTWORK_SLEEVE",
+      "pocket": "ARTWORK_POCKET"
+    },
+    "text": {
+      "front": "TEXT_FRONT",
+      "back": "TEXT_BACK",
+      "sleeve": "TEXT_SLEEVE",
+      "pocket": "TEXT_POCKET"
+    },
+    "safe_area": "SAFE_AREA",
+    "bleed": "BLEED"
+  },
+  "sku_map": [
+    [
+      "MenTee_",
+      "adulttshirt"
+    ],
+    [
+      "AnyTxtOverSizeTee_",
+      "adulttshirt"
+    ],
+    [
+      "WmnTee_",
+      "adulttshirt"
+    ],
+    [
+      "PoloTee_",
+      "adulttshirt"
+    ],
+    [
+      "AdultPoloTee_",
+      "adulttshirt"
+    ],
+    [
+      "SignLan01_Tee_",
+      "adulttshirt"
+    ],
+    [
+      "Custom04_Tee_",
+      "adulttshirt"
+    ],
+    [
+      "LegendSince",
+      "adulttshirt"
+    ],
+    [
+      "KidsTee_",
+      "kidstshirt"
+    ],
+    [
+      "SLan01KidsTee_",
+      "kidstshirt"
+    ],
+    [
+      "PerSingleLetter01KidsTee_",
+      "kidstshirt"
+    ],
+    [
+      "FootballKids",
+      "kidstshirt"
+    ],
+    [
+      "67BdayT02Kid",
+      "kidstshirt"
+    ],
+    [
+      "AnyTxtAdultHood_",
+      "adulthoodie"
+    ],
+    [
+      "MenHood_",
+      "adulthoodie"
+    ],
+    [
+      "HandStand",
+      "adulthoodie"
+    ],
+    [
+      "SplitGirl",
+      "adulthoodie"
+    ],
+    [
+      "FballN",
+      "adulthoodie"
+    ],
+    [
+      "NewFball",
+      "adulthoodie"
+    ],
+    [
+      "AnyTxtKidsHood_",
+      "kidshoodie"
+    ],
+    [
+      "KidsHood_",
+      "kidshoodie"
+    ],
+    [
+      "AnyTxtTote_",
+      "totebag"
+    ],
+    [
+      "Tote",
+      "totebag"
+    ],
+    [
+      "AnyTxtBckpck_",
+      "backpack"
+    ],
+    [
+      "BckPack",
+      "backpack"
+    ],
+    [
+      "Name01",
+      "backpack"
+    ],
+    [
+      "AnyTxtBabyVest_",
+      "babyvest"
+    ],
+    [
+      "BabyVest",
+      "babyvest"
+    ],
+    [
+      "AnyTextHat_",
+      "buckethat"
+    ],
+    [
+      "AnytxtBeanie_",
+      "beanie"
+    ],
+    [
+      "AnyTxtMakUp_",
+      "makeupbag"
+    ],
+    [
+      "AnyTxtBlanketHood_",
+      "hodieblanket"
+    ],
+    [
+      "AnyTxtShoeB_",
+      "shoebag"
+    ],
+    [
+      "AnyTxtSlip",
+      "slipper"
+    ],
+    [
+      "AnyTxtSocks",
+      "socks"
+    ],
+    [
+      "AnyTxt",
+      "adulttshirt"
+    ],
+    [
+      "PCushion",
+      "cushion"
+    ],
+    [
+      "CustomKidsTee_",
+      "kidstshirt"
+    ],
+    [
+      "Custom_Tee_",
+      "adulttshirt"
+    ],
+    [
+      "GymLeo",
+      "default"
+    ],
+    [
+      "SwimSuit",
+      "default"
+    ]
+  ],
+  "colour_map": {
+    "blk": [
+      20,
+      20,
+      20
+    ],
+    "wht": [
+      255,
+      255,
+      255
+    ],
+    "nvy": [
+      31,
+      40,
+      80
+    ],
+    "red": [
+      200,
+      30,
+      30
+    ],
+    "ylw": [
+      255,
+      220,
+      0
+    ],
+    "pnk": [
+      255,
+      150,
+      180
+    ],
+    "gry": [
+      150,
+      150,
+      150
+    ]
+  },
+  "complexity_flags": {
+    "screenshot_border": "Black letterbox borders detected",
+    "low_resolution": "Image < 500px even after upscaling",
+    "bg_removal_uncertain": "Confidence < 80%",
+    "too_many_photos": "More than 6 photos in collage",
+    "text_overflow": "Text too long for canvas",
+    "unknown_product": "Product not in product catalog",
+    "processing_error": "Any script error",
+    "premium_font": "Font .ttf file not installed"
+  },
+  "products": {
+    "adulttshirt": {
+      "front": {
+        "width_cm": 30,
+        "height_cm": 30,
+        "width_px": 3780,
+        "height_px": 3780
+      },
+      "back": {
+        "width_cm": 30,
+        "height_cm": 30,
+        "width_px": 3780,
+        "height_px": 3780
+      },
+      "pocket": {
+        "width_cm": 9,
+        "height_cm": 9,
+        "width_px": 1134,
+        "height_px": 1134
+      }
+    },
+    "kidstshirt": {
+      "front": {
+        "width_cm": 22,
+        "height_cm": 30,
+        "width_px": 2772,
+        "height_px": 3780
+      },
+      "back": {
+        "width_cm": 22,
+        "height_cm": 30,
+        "width_px": 2772,
+        "height_px": 3780
+      },
+      "pocket": {
+        "width_cm": 9,
+        "height_cm": 9,
+        "width_px": 1134,
+        "height_px": 1134
+      }
+    },
+    "adulthoodie": {
+      "front": {
+        "width_cm": 25,
+        "height_cm": 25,
+        "width_px": 3150,
+        "height_px": 3150
+      },
+      "back": {
+        "width_cm": 25,
+        "height_cm": 25,
+        "width_px": 3150,
+        "height_px": 3150
+      },
+      "pocket": {
+        "width_cm": 9,
+        "height_cm": 9,
+        "width_px": 1134,
+        "height_px": 1134
+      },
+      "sleeve": {
+        "width_cm": 9,
+        "height_cm": 7,
+        "width_px": 1134,
+        "height_px": 882
+      }
+    },
+    "kidshoodie": {
+      "front": {
+        "width_cm": 23,
+        "height_cm": 20,
+        "width_px": 2898,
+        "height_px": 2520
+      },
+      "back": {
+        "width_cm": 23,
+        "height_cm": 20,
+        "width_px": 2898,
+        "height_px": 2520
+      },
+      "pocket": {
+        "width_cm": 9,
+        "height_cm": 9,
+        "width_px": 1134,
+        "height_px": 1134
+      }
+    },
+    "totebag": {
+      "front": {
+        "width_cm": 28,
+        "height_cm": 28,
+        "width_px": 3528,
+        "height_px": 3528
+      },
+      "back": {
+        "width_cm": 28,
+        "height_cm": 28,
+        "width_px": 3528,
+        "height_px": 3528
+      }
+    },
+    "backpack": {
+      "front": {
+        "width_cm": 18,
+        "height_cm": 12,
+        "width_px": 2268,
+        "height_px": 1512
+      }
+    },
+    "stringbag": {
+      "front": {
+        "width_cm": 22,
+        "height_cm": 24,
+        "width_px": 2772,
+        "height_px": 3024
+      }
+    },
+    "jutebag": {
+      "front": {
+        "width_cm": 25,
+        "height_cm": 21,
+        "width_px": 3150,
+        "height_px": 2646
+      }
+    },
+    "buckethat": {
+      "front": {
+        "width_cm": 11,
+        "height_cm": 5,
+        "width_px": 1386,
+        "height_px": 630
+      }
+    },
+    "socks": {
+      "front": {
+        "width_cm": 6,
+        "height_cm": 12,
+        "width_px": 756,
+        "height_px": 1512
+      }
+    },
+    "babyvest": {
+      "front": {
+        "width_cm": 15,
+        "height_cm": 17,
+        "width_px": 1890,
+        "height_px": 2142
+      }
+    },
+    "memorialplaque": {
+      "front": {
+        "width_cm": 14,
+        "height_cm": 9,
+        "width_px": 1764,
+        "height_px": 1134
+      }
+    },
+    "golftowel": {
+      "front": {
+        "width_cm": 17,
+        "height_cm": 17,
+        "width_px": 2142,
+        "height_px": 2142
+      }
+    },
+    "kiddo": {
+      "front": {
+        "width_cm": 16,
+        "height_cm": 16,
+        "width_px": 2016,
+        "height_px": 2016
+      }
+    },
+    "book": {
+      "front": {
+        "width_cm": 15,
+        "height_cm": 15,
+        "width_px": 1890,
+        "height_px": 1890
+      }
+    },
+    "makeupbag": {
+      "front": {
+        "width_cm": 23,
+        "height_cm": 14,
+        "width_px": 2898,
+        "height_px": 1764
+      }
+    },
+    "shoebag": {
+      "front": {
+        "width_cm": 23,
+        "height_cm": 14,
+        "width_px": 2898,
+        "height_px": 1764
+      }
+    },
+    "shoebag2": {
+      "front": {
+        "width_cm": 14,
+        "height_cm": 14,
+        "width_px": 1764,
+        "height_px": 1764
+      }
+    },
+    "beanie": {
+      "front": {
+        "width_cm": 9.5,
+        "height_cm": 4.5,
+        "width_px": 1197,
+        "height_px": 567
+      }
+    },
+    "seatbelt": {
+      "front": {
+        "width_cm": 18,
+        "height_cm": 4,
+        "width_px": 2268,
+        "height_px": 504
+      }
+    },
+    "sleepsuit": {
+      "front": {
+        "width_cm": 13,
+        "height_cm": 18,
+        "width_px": 1638,
+        "height_px": 2268
+      }
+    },
+    "hodieblanket": {
+      "front": {
+        "width_cm": 17,
+        "height_cm": 5,
+        "width_px": 2142,
+        "height_px": 630
+      }
+    },
+    "cushion": {
+      "front": {
+        "width_cm": 30,
+        "height_cm": 30,
+        "width_px": 3780,
+        "height_px": 3780
+      }
+    },
+    "golfcase": {
+      "front": {
+        "width_cm": 15,
+        "height_cm": 6,
+        "width_px": 1890,
+        "height_px": 756
+      }
+    },
+    "slipper": {
+      "front": {
+        "width_cm": 6,
+        "height_cm": 6,
+        "width_px": 756,
+        "height_px": 756
+      }
+    },
+    "default": {
+      "front": {
+        "width_cm": 30,
+        "height_cm": 30,
+        "width_px": 3780,
+        "height_px": 3780
+      },
+      "back": {
+        "width_cm": 30,
+        "height_cm": 30,
+        "width_px": 3780,
+        "height_px": 3780
+      },
+      "pocket": {
+        "width_cm": 9,
+        "height_cm": 9,
+        "width_px": 1134,
+        "height_px": 1134
+      }
+    }
+  }
+}

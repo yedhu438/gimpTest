@@ -1,0 +1,49 @@
+{
+  "template": "adulthoodie_back",
+  "product": "adulthoodie",
+  "zone": "back",
+  "psd_file": "adulthoodie_back.psd",
+  "psd_file_confirmed": false,
+  "canvas": {
+    "width_cm": 25,
+    "height_cm": 25,
+    "width_px": 3150,
+    "height_px": 3150,
+    "size_source": "v4_legacy"
+  },
+  "photoshop_document": {
+    "resolution": 320,
+    "resolution_unit": "Pixels/Inch",
+    "units": "Centimeters",
+    "color_mode": "CMYK Color",
+    "bit_depth": 8,
+    "background": "Transparent",
+    "color_profile": "U.S. Web Coated (SWOP) v2",
+    "pixel_aspect_ratio": "Square Pixels"
+  },
+  "artwork": {
+    "smart_object_layer": "ARTWORK_BACK",
+    "fit": "contain",
+    "safe_area": {
+      "x": 0,
+      "y": 0,
+      "width": 3150,
+      "height": 3150
+    },
+    "safe_area_confirmed": false
+  },
+  "text": {
+    "layer": "TEXT_BACK",
+    "legacy_layer": "CustomerText_back",
+    "alignment": "center",
+    "align_within": "zone",
+    "max_width_percent": 0.8,
+    "zone": {
+      "x": 0,
+      "y": 0,
+      "width": 3150,
+      "height": 3150
+    },
+    "zone_confirmed": false
+  }
+}

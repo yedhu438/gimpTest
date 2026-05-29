@@ -1,0 +1,49 @@
+{
+  "template": "cushion_front",
+  "product": "cushion",
+  "zone": "front",
+  "psd_file": "cushion_front.psd",
+  "psd_file_confirmed": false,
+  "canvas": {
+    "width_cm": 30,
+    "height_cm": 30,
+    "width_px": 3780,
+    "height_px": 3780,
+    "size_source": "v4_legacy"
+  },
+  "photoshop_document": {
+    "resolution": 320,
+    "resolution_unit": "Pixels/Inch",
+    "units": "Centimeters",
+    "color_mode": "CMYK Color",
+    "bit_depth": 8,
+    "background": "Transparent",
+    "color_profile": "U.S. Web Coated (SWOP) v2",
+    "pixel_aspect_ratio": "Square Pixels"
+  },
+  "artwork": {
+    "smart_object_layer": "ARTWORK_FRONT",
+    "fit": "contain",
+    "safe_area": {
+      "x": 0,
+      "y": 0,
+      "width": 3780,
+      "height": 3780
+    },
+    "safe_area_confirmed": false
+  },
+  "text": {
+    "layer": "TEXT_FRONT",
+    "legacy_layer": "CustomerText_front",
+    "alignment": "center",
+    "align_within": "zone",
+    "max_width_percent": 0.8,
+    "zone": {
+      "x": 0,
+      "y": 0,
+      "width": 3780,
+      "height": 3780
+    },
+    "zone_confirmed": false
+  }
+}

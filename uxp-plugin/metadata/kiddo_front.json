@@ -1,0 +1,49 @@
+{
+  "template": "kiddo_front",
+  "product": "kiddo",
+  "zone": "front",
+  "psd_file": "kiddo_front.psd",
+  "psd_file_confirmed": false,
+  "canvas": {
+    "width_cm": 16,
+    "height_cm": 16,
+    "width_px": 2016,
+    "height_px": 2016,
+    "size_source": "ps_preset"
+  },
+  "photoshop_document": {
+    "resolution": 320,
+    "resolution_unit": "Pixels/Inch",
+    "units": "Centimeters",
+    "color_mode": "CMYK Color",
+    "bit_depth": 8,
+    "background": "Transparent",
+    "color_profile": "U.S. Web Coated (SWOP) v2",
+    "pixel_aspect_ratio": "Square Pixels"
+  },
+  "artwork": {
+    "smart_object_layer": "ARTWORK_FRONT",
+    "fit": "contain",
+    "safe_area": {
+      "x": 0,
+      "y": 0,
+      "width": 2016,
+      "height": 2016
+    },
+    "safe_area_confirmed": false
+  },
+  "text": {
+    "layer": "TEXT_FRONT",
+    "legacy_layer": "CustomerText_front",
+    "alignment": "center",
+    "align_within": "zone",
+    "max_width_percent": 0.8,
+    "zone": {
+      "x": 0,
+      "y": 0,
+      "width": 2016,
+      "height": 2016
+    },
+    "zone_confirmed": false
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "template": "kidstshirt_pocket",
+  "product": "kidstshirt",
+  "zone": "pocket",
+  "psd_file": "kidstshirt_pocket.psd",
+  "psd_file_confirmed": false,
+  "canvas": {
+    "width_cm": 9,
+    "height_cm": 9,
+    "width_px": 1134,
+    "height_px": 1134,
+    "size_source": "v4_legacy"
+  },
+  "photoshop_document": {
+    "resolution": 320,
+    "resolution_unit": "Pixels/Inch",
+    "units": "Centimeters",
+    "color_mode": "CMYK Color",
+    "bit_depth": 8,
+    "background": "Transparent",
+    "color_profile": "U.S. Web Coated (SWOP) v2",
+    "pixel_aspect_ratio": "Square Pixels"
+  },
+  "artwork": {
+    "smart_object_layer": "ARTWORK_POCKET",
+    "fit": "contain",
+    "safe_area": {
+      "x": 0,
+      "y": 0,
+      "width": 1134,
+      "height": 1134
+    },
+    "safe_area_confirmed": false
+  },
+  "text": {
+    "layer": "TEXT_POCKET",
+    "legacy_layer": "CustomerText_pocket",
+    "alignment": "center",
+    "align_within": "zone",
+    "max_width_percent": 0.8,
+    "zone": {
+      "x": 0,
+      "y": 0,
+      "width": 1134,
+      "height": 1134
+    },
+    "zone_confirmed": false
+  }
+}

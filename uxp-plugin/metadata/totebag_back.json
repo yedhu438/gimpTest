@@ -1,0 +1,49 @@
+{
+  "template": "totebag_back",
+  "product": "totebag",
+  "zone": "back",
+  "psd_file": "totebag_back.psd",
+  "psd_file_confirmed": false,
+  "canvas": {
+    "width_cm": 28,
+    "height_cm": 28,
+    "width_px": 3528,
+    "height_px": 3528,
+    "size_source": "v4_legacy"
+  },
+  "photoshop_document": {
+    "resolution": 320,
+    "resolution_unit": "Pixels/Inch",
+    "units": "Centimeters",
+    "color_mode": "CMYK Color",
+    "bit_depth": 8,
+    "background": "Transparent",
+    "color_profile": "U.S. Web Coated (SWOP) v2",
+    "pixel_aspect_ratio": "Square Pixels"
+  },
+  "artwork": {
+    "smart_object_layer": "ARTWORK_BACK",
+    "fit": "contain",
+    "safe_area": {
+      "x": 0,
+      "y": 0,
+      "width": 3528,
+      "height": 3528
+    },
+    "safe_area_confirmed": false
+  },
+  "text": {
+    "layer": "TEXT_BACK",
+    "legacy_layer": "CustomerText_back",
+    "alignment": "center",
+    "align_within": "zone",
+    "max_width_percent": 0.8,
+    "zone": {
+      "x": 0,
+      "y": 0,
+      "width": 3528,
+      "height": 3528
+    },
+    "zone_confirmed": false
+  }
+}

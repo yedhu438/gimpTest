@@ -1,0 +1,49 @@
+{
+  "template": "hodieblanket_front",
+  "product": "hodieblanket",
+  "zone": "front",
+  "psd_file": "hodieblanket_front.psd",
+  "psd_file_confirmed": false,
+  "canvas": {
+    "width_cm": 17,
+    "height_cm": 5,
+    "width_px": 2142,
+    "height_px": 630,
+    "size_source": "v4_legacy"
+  },
+  "photoshop_document": {
+    "resolution": 320,
+    "resolution_unit": "Pixels/Inch",
+    "units": "Centimeters",
+    "color_mode": "CMYK Color",
+    "bit_depth": 8,
+    "background": "Transparent",
+    "color_profile": "U.S. Web Coated (SWOP) v2",
+    "pixel_aspect_ratio": "Square Pixels"
+  },
+  "artwork": {
+    "smart_object_layer": "ARTWORK_FRONT",
+    "fit": "contain",
+    "safe_area": {
+      "x": 0,
+      "y": 0,
+      "width": 2142,
+      "height": 630
+    },
+    "safe_area_confirmed": false
+  },
+  "text": {
+    "layer": "TEXT_FRONT",
+    "legacy_layer": "CustomerText_front",
+    "alignment": "center",
+    "align_within": "zone",
+    "max_width_percent": 0.8,
+    "zone": {
+      "x": 0,
+      "y": 0,
+      "width": 2142,
+      "height": 630
+    },
+    "zone_confirmed": false
+  }
+}

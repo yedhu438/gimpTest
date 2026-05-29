@@ -1,0 +1,49 @@
+{
+  "template": "babyvest_front",
+  "product": "babyvest",
+  "zone": "front",
+  "psd_file": "babyvest_front.psd",
+  "psd_file_confirmed": false,
+  "canvas": {
+    "width_cm": 15,
+    "height_cm": 17,
+    "width_px": 1890,
+    "height_px": 2142,
+    "size_source": "ps_preset"
+  },
+  "photoshop_document": {
+    "resolution": 320,
+    "resolution_unit": "Pixels/Inch",
+    "units": "Centimeters",
+    "color_mode": "CMYK Color",
+    "bit_depth": 8,
+    "background": "Transparent",
+    "color_profile": "U.S. Web Coated (SWOP) v2",
+    "pixel_aspect_ratio": "Square Pixels"
+  },
+  "artwork": {
+    "smart_object_layer": "ARTWORK_FRONT",
+    "fit": "contain",
+    "safe_area": {
+      "x": 0,
+      "y": 0,
+      "width": 1890,
+      "height": 2142
+    },
+    "safe_area_confirmed": false
+  },
+  "text": {
+    "layer": "TEXT_FRONT",
+    "legacy_layer": "CustomerText_front",
+    "alignment": "center",
+    "align_within": "zone",
+    "max_width_percent": 0.8,
+    "zone": {
+      "x": 0,
+      "y": 0,
+      "width": 1890,
+      "height": 2142
+    },
+    "zone_confirmed": false
+  }
+}

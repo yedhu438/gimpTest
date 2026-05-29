@@ -1,0 +1,14 @@
+{
+  "order_id": "TEST-205-6487629-5805162",
+  "template": "adulttshirt_front.psd",
+  "canvas_w_px": 3780,
+  "dpi": 320,
+  "zones": {
+    "front": {
+      "customer_image": "test.png",
+      "text_lines": ["I Love AI", "Varsany"],
+      "colour_hex": "#ff0000"
+    }
+  },
+  "output_path": "TEST-205-6487629-5805162_front.psd"
+}

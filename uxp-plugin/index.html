@@ -12,6 +12,7 @@
 </head>
 <body>
 <div id="status"><span class="dot"></span>Starting...</div>
+<button id="buildBtn" style="margin:4px 0;padding:5px 10px;background:#3a6ea5;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px">Build Templates (front)</button>
 <div id="log"></div>
 <script>
 const {app,core,action,constants} = require("photoshop");
@@ -153,16 +154,14 @@ async function processJob(jobEntry){
         if(imgEntries[zone]){
           try{
             const imgToken = fs.createSessionToken(imgEntries[zone]);
+            // Place as a Smart Object (no rasterize) — keeps artwork editable,
+            // non-destructive and RIP-friendly per the UXP refactor plan.
             await action.batchPlay([{
               _obj:"placeEvent",
               null:{_path:imgToken,_kind:"local"},
               freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}
             }],{synchronousExecution:true});
-            await action.batchPlay([{
-              _obj:"rasterizeLayer",
-              null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}
-            }],{synchronousExecution:true});
-            log("Placed image: "+zone);
+            log("Placed image (smart object): "+zone);
           }catch(e){ log("Place error ("+zone+"): "+e.message, true); }
         }
 
@@ -171,48 +170,63 @@ async function processJob(jobEntry){
           const layer = findLayer(doc.layers, "CustomerText_"+zone);
           if(layer && layer.kind === "text"){
             const text = data.text_lines.join("\n");
-            // Calculate font size in points from canvas width and DPI
-            // Target: text fills ~80% of canvas width for longest line
-            const canvasWpx  = job.canvas_w_px || doc.width;
-            const dpi        = job.dpi || 320;
-            const pxPerPoint = dpi / 72;
-            const longestLine = data.text_lines.reduce((a,b) => a.length > b.length ? a : b, "");
-            const charCount  = Math.max(longestLine.length, 1);
-            // Empirical: Arial Bold average char width ≈ 0.55 × font size
-            const targetPx   = canvasWpx * 0.80;
-            const fontSizePt = Math.round((targetPx / charCount / 0.55) / pxPerPoint);
-            const clampedPt  = Math.min(Math.max(fontSizePt, 20), 400);
+            // Target: longest text line fills ~80% of canvas width.
+            const canvasWpx = job.canvas_w_px || doc.width;
+            const targetPx  = canvasWpx * 0.80;
             const hex = data.colour_hex || "#ffffff";
             const r = parseInt(hex.slice(1,3),16);
             const g = parseInt(hex.slice(3,5),16);
             const b = parseInt(hex.slice(5,7),16);
-            await action.batchPlay([{
-              _obj: "set",
-              null: { _ref: [{ _ref: "layer", _name: "CustomerText_"+zone }] },
-              to: {
-                _obj: "textLayer",
-                textKey: text,
-                textStyleRange: [{
-                  _obj: "textStyleRange",
-                  from: 0,
-                  to: text.length,
-                  textStyle: {
-                    _obj: "textStyle",
-                    size: { _unit: "pointsUnit", _value: clampedPt },
-                    color: { _obj: "RGBColor", red: r, grain: g, blue: b }
-                  }
-                }],
-                paragraphStyleRange: [{
-                  _obj: "paragraphStyleRange",
-                  from: 0,
-                  to: text.length,
-                  paragraphStyle: {
-                    _obj: "paragraphStyle",
-                    alignment: { _enum: "alignmentType", _value: "center" }
-                  }
-                }]
+
+            // Apply text content + style at a given point size.
+            async function applyText(sizePt){
+              await action.batchPlay([{
+                _obj: "set",
+                null: { _ref: [{ _ref: "layer", _name: "CustomerText_"+zone }] },
+                to: {
+                  _obj: "textLayer",
+                  textKey: text,
+                  textStyleRange: [{
+                    _obj: "textStyleRange",
+                    from: 0,
+                    to: text.length,
+                    textStyle: {
+                      _obj: "textStyle",
+                      size: { _unit: "pointsUnit", _value: sizePt },
+                      color: { _obj: "RGBColor", red: r, green: g, blue: b }
+                    }
+                  }],
+                  paragraphStyleRange: [{
+                    _obj: "paragraphStyleRange",
+                    from: 0,
+                    to: text.length,
+                    paragraphStyle: {
+                      _obj: "paragraphStyle",
+                      alignment: { _enum: "alignmentType", _value: "center" }
+                    }
+                  }]
+                }
+              }],{synchronousExecution:true});
+            }
+
+            // Measure the rendered text width via the layer's bounds, then
+            // scale toward targetPx. Two passes converge on the right size
+            // for the actual font/glyphs instead of a char-count heuristic.
+            let sizePt = 100;
+            try{
+              await applyText(sizePt);
+              for(let pass=0; pass<2; pass++){
+                const b0 = layer.bounds;
+                const widthPx = (b0.right - b0.left) || 1;
+                sizePt = Math.min(Math.max(sizePt * (targetPx / widthPx), 20), 400);
+                await applyText(sizePt);
               }
-            }],{synchronousExecution:true});
+            }catch(e){
+              log("Text measure fallback ("+zone+"): "+e.message, true);
+              sizePt = Math.min(Math.max(sizePt, 20), 400);
+              await applyText(sizePt);
+            }
+            const clampedPt = Math.round(sizePt);
             // Move text layer to top
             await action.batchPlay([{
               _obj: "move",
@@ -297,8 +311,112 @@ async function pollJobs(){
   processing = false;
 }
 
+// ── Template generator ─────────────────────────────────────────────────────────
+// One-time: reads catalog.json (bundled in plugin) and creates a blank PSD per
+// UNIQUE front canvas size, named <W>x<H>.psd. Products that share a size share
+// one template. Each PSD: CMYK 8-bit, 320ppi, transparent, SWOP profile, with a
+// CustomerText_front text layer and an Artwork_front placeholder layer.
+async function generateTemplates(){
+  if(!DATA_FOLDER){ log("Not ready yet", true); return; }
+  if(processing){ log("Busy — try again in a moment", true); return; }
+  processing = true;
+  try{
+    // Read catalog.json from the plugin's own folder
+    let catalog;
+    try{
+      const pf   = await fs.getPluginFolder();
+      const meta = await pf.getEntry("metadata");
+      const cat  = await meta.getEntry("catalog.json");
+      catalog = JSON.parse(await cat.read({format:uxp.storage.formats.utf8}));
+    }catch(e){ log("catalog.json read error: "+e.message, true); return; }
+
+    // One template per product (front zone), named <product>_front.psd for
+    // easy identification — matches the owner's PRODUCT_CANVAS keys.
+    const items = [];
+    for(const [prod,zones] of Object.entries(catalog.products||{})){
+      const front = zones.front;
+      if(!front) continue;
+      items.push({prod, w:front.width_px, h:front.height_px});
+    }
+    const tplFolder = await getOrCreate(DATA_FOLDER, "templates");
+    log("Building "+items.length+" template(s)...");
+
+    await core.executeAsModal(async()=>{
+      for(const s of items){
+        const name = s.prod+"_front.psd";
+        try{
+          // 1. Create document: CMYK 8-bit, 320ppi, transparent, SWOP
+          await action.batchPlay([{
+            _obj:"make",
+            new:{
+              _obj:"document",
+              artboard:false,
+              autoPromoteBackgroundLayer:false,
+              preset:"Custom",
+              width:{_unit:"pixelsUnit",_value:s.w},
+              height:{_unit:"pixelsUnit",_value:s.h},
+              resolution:{_unit:"densityUnit",_value:320},
+              pixelScaleFactor:1,
+              mode:{_class:"CMYKColorMode"},
+              fill:{_enum:"fill",_value:"transparent"},
+              depth:8,
+              profile:"U.S. Web Coated (SWOP) v2"
+            }
+          }],{synchronousExecution:true});
+
+          // 2. Artwork placeholder layer (empty pixel layer)
+          await action.batchPlay([{_obj:"make",_target:[{_ref:"layer"}]}],{synchronousExecution:true});
+          await action.batchPlay([{
+            _obj:"set",
+            _target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],
+            to:{_obj:"layer",name:"Artwork_front"}
+          }],{synchronousExecution:true});
+
+          // 3. Text layer (ends on top), renamed to CustomerText_front
+          await action.batchPlay([{
+            _obj:"make",
+            _target:[{_ref:"textLayer"}],
+            using:{
+              _obj:"textLayer",
+              textKey:"Your text here",
+              textClickPoint:{_obj:"paint",
+                horizontal:{_unit:"percentUnit",_value:50},
+                vertical:{_unit:"percentUnit",_value:50}},
+              textStyleRange:[{_obj:"textStyleRange",from:0,to:14,
+                textStyle:{_obj:"textStyle",size:{_unit:"pointsUnit",_value:100}}}]
+            }
+          }],{synchronousExecution:true});
+          await action.batchPlay([{
+            _obj:"set",
+            _target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],
+            to:{_obj:"layer",name:"CustomerText_front"}
+          }],{synchronousExecution:true});
+
+          // 4. Save as PSD into templates/
+          const f = await tplFolder.createFile(name,{overwrite:true});
+          const token = fs.createSessionToken(f);
+          await action.batchPlay([{
+            _obj:"save",
+            as:{_obj:"photoshop35Format",maximizeCompatibility:true},
+            in:{_path:token,_kind:"local"}
+          }],{synchronousExecution:true});
+
+          await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);
+          log("Template: "+name+" ("+s.w+"x"+s.h+")");
+        }catch(e){
+          log("Template error "+name+": "+(e.message||e), true);
+          try{ await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES); }catch(x){}
+        }
+      }
+    },{commandName:"Build Varsany templates"});
+    log("Template build complete → "+tplFolder.nativePath);
+  }catch(e){ log("Build error: "+e.message, true); }
+  finally{ processing = false; }
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 initFolders().then(()=>{
+  document.getElementById("buildBtn").addEventListener("click", generateTemplates);
   setInterval(pollJobs, POLL_MS);
   log("Varsany worker polling every "+(POLL_MS/1000)+"s");
 }).catch(e => log("Init error: "+e.message, true));

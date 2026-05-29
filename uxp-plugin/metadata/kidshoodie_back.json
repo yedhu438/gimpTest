@@ -1,0 +1,49 @@
+{
+  "template": "kidshoodie_back",
+  "product": "kidshoodie",
+  "zone": "back",
+  "psd_file": "kidshoodie_back.psd",
+  "psd_file_confirmed": false,
+  "canvas": {
+    "width_cm": 23,
+    "height_cm": 20,
+    "width_px": 2898,
+    "height_px": 2520,
+    "size_source": "v4_legacy"
+  },
+  "photoshop_document": {
+    "resolution": 320,
+    "resolution_unit": "Pixels/Inch",
+    "units": "Centimeters",
+    "color_mode": "CMYK Color",
+    "bit_depth": 8,
+    "background": "Transparent",
+    "color_profile": "U.S. Web Coated (SWOP) v2",
+    "pixel_aspect_ratio": "Square Pixels"
+  },
+  "artwork": {
+    "smart_object_layer": "ARTWORK_BACK",
+    "fit": "contain",
+    "safe_area": {
+      "x": 0,
+      "y": 0,
+      "width": 2898,
+      "height": 2520
+    },
+    "safe_area_confirmed": false
+  },
+  "text": {
+    "layer": "TEXT_BACK",
+    "legacy_layer": "CustomerText_back",
+    "alignment": "center",
+    "align_within": "zone",
+    "max_width_percent": 0.8,
+    "zone": {
+      "x": 0,
+      "y": 0,
+      "width": 2898,
+      "height": 2520
+    },
+    "zone_confirmed": false
+  }
+}
