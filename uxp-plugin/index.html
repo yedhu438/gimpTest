@@ -148,56 +148,28 @@ async function processJob(jobEntry){
       doc = app.activeDocument;
       log("Opened: "+doc.name);
 
-      // 2. Process each zone
+      // 2. Process each zone — place images first, then set text on top
+      // PHASE 1: Place all images
       for(const [zone,data] of Object.entries(job.zones)){
-        // Place image — token created and used immediately
         if(imgEntries[zone]){
           try{
             const imgToken = fs.createSessionToken(imgEntries[zone]);
-            // Place as a Smart Object (no rasterize) — keeps artwork editable,
-            // non-destructive and RIP-friendly per the UXP refactor plan.
             await action.batchPlay([{
               _obj:"placeEvent",
               null:{_path:imgToken,_kind:"local"},
               freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}
             }],{synchronousExecution:true});
-
-            // Fit-and-trim: scale the image proportionally (no distortion) until
-            // it touches a canvas edge, then trim the leftover blank canvas so the
-            // print file is exactly the artwork. Up- or down-scales as needed.
-            const placed  = doc.activeLayers[0];        // the just-placed smart object
-            const pb      = placed.bounds;
-            const imgW    = Number(pb.right - pb.left) || 1;
-            const imgH    = Number(pb.bottom - pb.top) || 1;
-            const canvasW = Number(doc.width);
-            const canvasH = Number(doc.height);
-            const scale   = Math.min(canvasW / imgW, canvasH / imgH);
-
-            if(Math.abs(scale - 1) > 0.001){
-              await action.batchPlay([{
-                _obj:"transform",
-                _target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],
-                freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"},
-                offset:{_obj:"offset",horizontal:{_unit:"pixelsUnit",_value:0},vertical:{_unit:"pixelsUnit",_value:0}},
-                width: {_unit:"percentUnit",_value:scale*100},
-                height:{_unit:"percentUnit",_value:scale*100}
-              }],{synchronousExecution:true});
-            }
-
-            const sw = Math.round(imgW * scale);
-            const sh = Math.round(imgH * scale);
             await action.batchPlay([{
-              _obj:"canvasSize",
-              width: {_unit:"pixelsUnit",_value:sw},
-              height:{_unit:"pixelsUnit",_value:sh},
-              horizontal:{_enum:"horizontalLocation",_value:"center"},
-              vertical:  {_enum:"verticalLocation",_value:"center"}
+              _obj:"rasterizeLayer",
+              null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}
             }],{synchronousExecution:true});
-            log("Placed + fit image: "+zone+" ("+sw+"x"+sh+")");
+            log("Placed image: "+zone);
           }catch(e){ log("Place error ("+zone+"): "+e.message, true); }
         }
+      }
 
-        // Set text layer
+      // PHASE 2: Set text + move to top AFTER all images placed
+      for(const [zone,data] of Object.entries(job.zones)){
         if(data.text_lines?.length){
           const layer = findLayer(doc.layers, "CustomerText_"+zone);
           if(layer && layer.kind === "text"){
