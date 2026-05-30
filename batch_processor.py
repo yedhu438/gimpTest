@@ -3258,12 +3258,12 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
             if _USE_PS_BRIDGE and len(group_rows) == 1:
                 ok, msg = _build_psd_via_photoshop(order_id, first_row, out_path)
                 if not ok:
-                    log(f"  PS Bridge: {msg} — falling back to Python writer", "WARN")
+                    log(f"  UXP Bridge FAILED: {msg} - UXP is the only engine, no fallback", "FAIL")
 
-            if not ok:
-                if len(group_rows) == 1:
-                    ok, msg = build_psd_for_order(order_id, first_row, out_path, no_bg_remove=no_bg_remove)
-                else:
+
+
+
+
                     ok, msg = build_merged_psd_for_order_group(order_id, group_rows, out_path, no_bg_remove=no_bg_remove)
 
             if ok:
