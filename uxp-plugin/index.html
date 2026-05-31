@@ -149,16 +149,33 @@ async function processJob(jobEntry){
       log("Opened: "+doc.name);
 
       // 2. Process each zone — place images first, then set text on top
-      // PHASE 1: Place all images
+      // PHASE 1: Open each image, copy, paste into template above CustomerImage layer
+      // This guarantees text layer stays on top since template has CustomerText at top
       for(const [zone,data] of Object.entries(job.zones)){
         if(imgEntries[zone]){
           try{
+            // Open image as separate document
             const imgToken = fs.createSessionToken(imgEntries[zone]);
             await action.batchPlay([{
-              _obj:"placeEvent",
+              _obj:"open",
               null:{_path:imgToken,_kind:"local"},
-              freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}
+              _options:{dialogOptions:"dontDisplay"}
             }],{synchronousExecution:true});
+            const imgDoc = app.activeDocument;
+            // Select all and copy
+            await action.batchPlay([{_obj:"selectAll"}],{synchronousExecution:true});
+            await action.batchPlay([{_obj:"copyMerged"}],{synchronousExecution:true});
+            await imgDoc.close(constants.SaveOptions.DONOTSAVECHANGES);
+            // Switch back to template
+            app.activeDocument = doc;
+            // Select CustomerImage placeholder — paste will land above it
+            await action.batchPlay([{
+              _obj:"select",
+              null:{_ref:[{_ref:"layer",_name:"CustomerImage_"+zone}]}
+            }],{synchronousExecution:true});
+            // Paste in place
+            await action.batchPlay([{_obj:"paste",inPlace:true}],{synchronousExecution:true});
+            // Scale pasted layer to fit canvas
             await action.batchPlay([{
               _obj:"rasterizeLayer",
               null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}
@@ -233,12 +250,6 @@ async function processJob(jobEntry){
               await applyText(sizePt);
             }
             const clampedPt = Math.round(sizePt);
-            // Move text layer to top
-            await action.batchPlay([{
-              _obj: "move",
-              null: { _ref: [{ _ref: "layer", _name: "CustomerText_"+zone }] },
-              to: { _ref: [{ _enum: "ordinal", _value: "front", _ref: "layer" }] }
-            }],{synchronousExecution:true});
 
             // Always centre horizontally on the canvas.
             await action.batchPlay([{
