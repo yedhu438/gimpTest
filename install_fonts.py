@@ -77,19 +77,28 @@ for folder in [r"A:\font\Fonts", r"A:\font\Premium Fonts"]:
             continue
         try:
             shutil.copy2(src, dest)
-            # Register font in Windows registry
-            import winreg
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts",
-                0, winreg.KEY_SET_VALUE)
-            winreg.SetValueEx(key, fname, 0, winreg.REG_SZ, fname)
-            winreg.CloseKey(key)
+            try:
+                import winreg
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts",
+                    0, winreg.KEY_SET_VALUE)
+                winreg.SetValueEx(key, fname, 0, winreg.REG_SZ, fname)
+                winreg.CloseKey(key)
+            except: pass
             print(f"  Installed: {fname}")
             installed += 1
         except Exception as e:
-            # Try without registry (may still work)
-            print(f"  Copied (no registry): {fname}")
-            installed += 1
+            print(f"  Failed: {fname} — {e}")
+            failed += 1
+
+# Also install Helvetica from A:\font if present
+helvetica_src = r"A:\font\Fonts\Helvetica.ttf"
+if os.path.exists(helvetica_src):
+    dest = os.path.join(WINDOWS_FONTS, "Helvetica.ttf")
+    if not os.path.exists(dest):
+        shutil.copy2(helvetica_src, dest)
+        print("  Installed: Helvetica.ttf")
+        installed += 1
 
 print(f"\nInstalled: {installed}  Already present: {skipped}  Failed: {failed}")
 
