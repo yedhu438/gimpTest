@@ -20,7 +20,21 @@ except ImportError:
     pass
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-_BRIDGE_ROOT = Path(os.environ.get("PS_BRIDGE_DIR", r"C:\Varsany\photoshop_bridge"))
+_DATA_PATH_FILE = Path(r"C:\Varsany\uxp-plugin\data_path.txt")
+
+def _resolve_bridge_root() -> Path:
+    # Prefer explicit env override
+    if os.environ.get("PS_BRIDGE_DIR"):
+        return Path(os.environ["PS_BRIDGE_DIR"])
+    # Read path written by the UXP plugin on startup
+    if _DATA_PATH_FILE.exists():
+        p = _DATA_PATH_FILE.read_text(encoding="utf-8").strip()
+        if p:
+            return Path(p)
+    # Fallback
+    return Path(r"C:\Varsany\photoshop_bridge")
+
+_BRIDGE_ROOT = _resolve_bridge_root()
 JOBS_DIR     = _BRIDGE_ROOT / "jobs"
 ASSETS_DIR   = _BRIDGE_ROOT / "images"
 DONE_DIR     = _BRIDGE_ROOT / "done"
