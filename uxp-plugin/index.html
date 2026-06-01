@@ -200,6 +200,7 @@ async function processJob(jobEntry){
                     to: text.length,
                     textStyle: {
                       _obj: "textStyle",
+                      fontPostScriptName: data.font_name || "ArialMT",
                       size: { _unit: "pointsUnit", _value: sizePt },
                       color: { _obj: "RGBColor", red: r, green: g, blue: b }
                     }
