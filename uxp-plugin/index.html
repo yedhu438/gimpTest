@@ -299,6 +299,42 @@ async function processJob(jobEntry){
         }
       }
 
+      // PHASE 3: Add zone label (FRONT / BACK / POCKET) in top-left corner
+      // Large bold red text so printing team can identify zone instantly
+      const zoneNames = Object.keys(job.zones);
+      const labelText = zoneNames.map(z => z.toUpperCase()).join(" / ");
+      const labelSizePt = Math.round(Number(doc.width) * 0.025); // ~95pt for 3780px
+      await action.batchPlay([{
+        _obj: "make",
+        _target: [{ _ref: "textLayer" }],
+        using: {
+          _obj: "textLayer",
+          textKey: labelText,
+          textClickPoint: {
+            _obj: "paint",
+            horizontal: { _unit: "percentUnit", _value: 1 },
+            vertical:   { _unit: "percentUnit", _value: 1 }
+          },
+          textStyleRange: [{
+            _obj: "textStyleRange",
+            from: 0, to: labelText.length,
+            textStyle: {
+              _obj: "textStyle",
+              fontPostScriptName: "Arial-BoldMT",
+              size: { _unit: "pointsUnit", _value: labelSizePt },
+              color: { _obj: "RGBColor", red: 255, green: 0, blue: 0 }
+            }
+          }]
+        }
+      }], { synchronousExecution: true });
+      // Rename the label layer
+      await action.batchPlay([{
+        _obj: "set",
+        null: { _ref: [{ _enum: "ordinal", _value: "targetEnum", _ref: "layer" }] },
+        to: { _obj: "layer", name: "ZoneLabel" }
+      }], { synchronousExecution: true });
+      log("Label added: "+labelText);
+
       // 3. Save PSD — token created and used immediately
       const outToken = fs.createSessionToken(outEntry);
       await action.batchPlay([{
