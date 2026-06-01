@@ -1,4 +1,4 @@
-import sys, os, json, shutil, urllib.request
+﻿import sys, os, json, shutil, urllib.request
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
 from pathlib import Path
@@ -124,7 +124,7 @@ def write_job(oid, zone_name, zone_data, canvas):
 conn = get_connection()
 cur  = conn.cursor()
 
-# ── BATCH 1: 10 orders with images (any font) ─────────────────────────────────
+# â”€â”€ BATCH 1: 10 orders with images (any font) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 print("=" * 60)
 print("BATCH 1: 10 orders with customer images")
 print("=" * 60)
@@ -162,7 +162,7 @@ for row in rows:
     count += 1
     print(f"  [{count:02d}] {oid} ({sku}) font={ff}")
 
-# ── BATCH 2: 10 orders with PREMIUM fonts ─────────────────────────────────────
+# â”€â”€ BATCH 2: 10 orders with PREMIUM fonts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 print()
 print("=" * 60)
 print("BATCH 2: 10 orders with premium fonts")
@@ -198,3 +198,4 @@ for row in rows2:
 
 print(f"\nTotal jobs written: {count + count2} orders queued.")
 print("UXP plugin will process them automatically.")
+

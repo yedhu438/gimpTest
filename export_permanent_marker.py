@@ -1,4 +1,4 @@
-import sys, os, json, shutil, urllib.request
+﻿import sys, os, json, shutil, urllib.request
 sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
@@ -140,3 +140,4 @@ for row in rows:
             Path(JOBS_DIR, f"{oid}_back.json").write_text(json.dumps(job2,indent=2),encoding="utf-8")
 
 print(f"\n{count} orders queued. UXP plugin will process them automatically.")
+

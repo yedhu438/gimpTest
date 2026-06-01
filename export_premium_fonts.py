@@ -1,4 +1,4 @@
-import sys, os, json, shutil, urllib.request
+﻿import sys, os, json, shutil, urllib.request
 sys.stdout.reconfigure(encoding='utf-8')
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
@@ -111,7 +111,7 @@ def ensure_image(fname):
 
 conn = get_connection()
 cur  = conn.cursor()
-# Get orders with premium fonts — exclude Permanent Marker (already done)
+# Get orders with premium fonts â€” exclude Permanent Marker (already done)
 cur.execute("""
     SELECT TOP 30 o.OrderID, o.SKU,
         d.FrontText, d.FrontFonts, d.FrontColours,
@@ -130,7 +130,7 @@ cur.execute("""
 rows = cur.fetchall()
 conn.close()
 
-# Deduplicate by font name — get 10 with different premium fonts
+# Deduplicate by font name â€” get 10 with different premium fonts
 seen_fonts = set()
 seen_orders = set()
 count = 0
@@ -177,3 +177,4 @@ for row in rows:
 
 print(f"\n{count} jobs queued. UXP plugin will process automatically.")
 print(f"Fonts used: {sorted(seen_fonts)}")
+
