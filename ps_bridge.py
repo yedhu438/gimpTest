@@ -22,7 +22,7 @@ except ImportError:
 # ── Paths ──────────────────────────────────────────────────────────────────────
 _BRIDGE_ROOT = Path(os.environ.get("PS_BRIDGE_DIR", r"C:\Varsany\photoshop_bridge"))
 JOBS_DIR     = _BRIDGE_ROOT / "jobs"
-ASSETS_DIR   = _BRIDGE_ROOT / "assets"
+ASSETS_DIR   = _BRIDGE_ROOT / "images"
 DONE_DIR     = _BRIDGE_ROOT / "done"
 ERROR_DIR    = _BRIDGE_ROOT / "error"
 

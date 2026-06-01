@@ -40,8 +40,18 @@ async function getOrCreate(parent,name){
   catch(e){return await parent.createFolder(name);}
 }
 
+const BRIDGE_ROOT = "file:///C:/Varsany/photoshop_bridge";
+
 async function initFolders(){
-  DATA_FOLDER  = await fs.getDataFolder();
+  try{
+    DATA_FOLDER = await fs.getEntryWithUrl(BRIDGE_ROOT);
+  }catch(e){
+    // Bridge folder doesn't exist yet — create it under C:\Varsany\
+    try{
+      const varsany = await fs.getEntryWithUrl("file:///C:/Varsany");
+      DATA_FOLDER = await varsany.createFolder("photoshop_bridge");
+    }catch(e2){ log("Cannot create bridge folder: "+e2.message, true); return; }
+  }
   JOBS_FOLDER  = await getOrCreate(DATA_FOLDER,"jobs");
   DONE_FOLDER  = await getOrCreate(DATA_FOLDER,"done");
   ERROR_FOLDER = await getOrCreate(DATA_FOLDER,"error");
@@ -112,7 +122,14 @@ async function processJob(jobEntry){
   let tplEntry, imgEntries={}, outEntry;
   try{
     const tplName = job.template.replace(/\\/g,"/").split("/").pop();
-    tplEntry = await getDataEntry("templates/"+tplName);
+    try{
+      // Try full path first (e.g. C:\Varsany\Templates\hoodie_front.psd)
+      const tplUrl = "file:///"+job.template.replace(/\\/g,"/").replace(/^\/+/,"");
+      tplEntry = await fs.getEntryWithUrl(tplUrl);
+    }catch(e){
+      // Fall back to bridge templates subfolder
+      tplEntry = await getDataEntry("templates/"+tplName);
+    }
 
     for(const [zone,data] of Object.entries(job.zones)){
       if(data.customer_image){
