@@ -22,7 +22,7 @@ const {app,core,action,constants} = require("photoshop");
 const uxp = require("uxp");
 const fs  = uxp.storage.localFileSystem;
 
-const PLUGIN_VERSION = "v3.0-combined";
+const PLUGIN_VERSION = "v3.1-domcrop";
 const POLL_MS   = 3000;
 const LABEL_PX  = 252;  // 2cm at 320dpi
 const GAP_PX    = 126;  // 1cm gap between zones
@@ -309,15 +309,12 @@ async function processJob(jobEntry){
           log("Zone done: "+zone+" bottom at "+zoneBottom);
         }
 
-        // Crop canvas to actual used height — anchor QCSBottomLeft keeps top, trims bottom
-        const finalH_pt = (currentY - GAP_PX) * 72 / res;
-        const docW_pt   = docW * 72 / res;
-        await bp([{_obj:"resizeCanvas",
-          width:{_unit:"pointsUnit",_value:docW_pt},
-          height:{_unit:"pointsUnit",_value:finalH_pt},
-          anchor:{_enum:"quadCenterState",_value:"QCSBottomLeft"}
-        }]);
-        log("Cropped to "+(currentY-GAP_PX)+"px height");
+        // Crop canvas using DOM API (batchPlay resizeCanvas silently fails)
+        const finalH = currentY - GAP_PX;
+        log("Cropping to "+finalH+"px via DOM...");
+        await app.activeDocument.resizeCanvas(docW, finalH, constants.AnchorPosition.TOPLEFT);
+        const newSize = await getDocSize();
+        log("Canvas after crop: "+newSize.w+"x"+newSize.h+"px");
 
       } else {
         // ── SINGLE ZONE MODE (existing behaviour) ─────────────────────────────
