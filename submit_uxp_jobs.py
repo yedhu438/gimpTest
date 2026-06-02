@@ -119,7 +119,7 @@ for row in rows:
         "combined":    True,
         "template":    "C:\\Varsany\\template\\combined_template.psd",
         "zones":       zones,
-        "output_path": f"C:\\Varsany\\Output\\ps_test\\{oid}_combined.psd",
+        "output_path": f"C:\\Varsany\\Output\\ps_test\\{oid}.psd",
         "dpi":         320
     }
     (JOBS_DIR / f"{oid}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
