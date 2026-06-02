@@ -1,33 +1,63 @@
 import sys, json, urllib.request
+from datetime import date
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
 from font_map import get_font_info
-from product_canvas import PRODUCT_CANVAS, SKU_MAP
 from pathlib import Path
 
 JOBS_DIR   = Path(r"C:\Varsany\jobs")
 IMAGES_DIR = Path(r"C:\Varsany\Temp\OrderImages")
 BASE_URL   = "http://www.crssoft.co.uk/CustomOrderImages/"
+OUTPUT_ROOT = Path(r"C:\Varsany\Output")
 
-PX_PER_CM = 320 / 2.54
-CANVAS = {
-    "adulttshirt": {"front":(int(30*PX_PER_CM),int(30*PX_PER_CM)),"back":(int(30*PX_PER_CM),int(30*PX_PER_CM)),"pocket":(int(9*PX_PER_CM),int(9*PX_PER_CM))},
-    "kidstshirt":  {"front":(int(23*PX_PER_CM),int(30*PX_PER_CM)),"back":(int(23*PX_PER_CM),int(30*PX_PER_CM))},
-    "adulthoodie": {"front":(int(25*PX_PER_CM),int(25*PX_PER_CM)),"back":(int(25*PX_PER_CM),int(25*PX_PER_CM)),"pocket":(int(9*PX_PER_CM),int(9*PX_PER_CM))},
-    "babyvest":    {"front":(int(15*PX_PER_CM),int(17*PX_PER_CM))},
-    "default":     {"front":(int(30*PX_PER_CM),int(30*PX_PER_CM)),"back":(int(30*PX_PER_CM),int(30*PX_PER_CM))},
+# ── Colour extraction from SKU ─────────────────────────────────────────────────
+COLOUR_MAP = {
+    "Blk": "black", "Black": "black",
+    "Wht": "white", "White": "white",
+    "Nvy": "navy",  "Navy": "navy",
+    "Pnk": "pink",  "Pink": "pink",
+    "Red": "red",   "Blu": "blue",  "Blue": "blue",
+    "Grn": "green", "Gry": "grey",  "Grey": "grey",
+    "Pur": "purple","Brn": "brown", "Org": "orange",
+    "Grph": "graphite", "Ivry": "ivory", "Ivo": "ivory",
+    "Fch": "fuchsia", "Yel": "yellow", "Tl": "teal",
+    "Kki": "khaki", "Cml": "camel", "Camo": "camo",
 }
-SKU_MAP = [
-    ("AnyTxtAdultHood_","adulthoodie"),("AnyTxtBabyVest_","babyvest"),
-    ("AnyTxt","adulttshirt"),("KidsTee_","kidstshirt"),
-    ("MenHood_","adulthoodie"),("WmnTee_","adulttshirt"),
-    ("MenTee_","adulttshirt"),("BabyVest","babyvest"),("COMenTee_","adulttshirt"),
-]
-def detect_product(sku):
-    for prefix, product in sorted(SKU_MAP, key=lambda x: -len(x[0])):
-        if sku.startswith(prefix): return product
-    return "default"
 
+def get_colour_from_sku(sku):
+    """Extract garment colour from SKU string."""
+    sku_parts = sku.replace("-", "_").split("_")
+    for part in sku_parts:
+        for code, colour in COLOUR_MAP.items():
+            if part == code or part.startswith(code):
+                return colour
+    return None
+
+def get_output_folder(sku, zone_count):
+    """
+    Route to correct output subfolder:
+      - multi-zone (2+)        → Automated\{colour}\ or Automated\
+      - kids hoodie single     → DTF Kids Hoodie\{colour}\ or DTF Kids Hoodie\
+      - everything else single → DTF Front\{colour}\ or DTF Front\
+    """
+    today     = date.today().strftime("%Y-%m-%d")
+    colour    = get_colour_from_sku(sku)
+    sku_lower = sku.lower()
+
+    if zone_count >= 2:
+        folder = "Automated"
+    elif any(k in sku_lower for k in ["kidshoo", "kidshood", "gymhoodie"]):
+        folder = "DTF Kids Hoodie"
+    else:
+        folder = "DTF Front"
+
+    base = OUTPUT_ROOT / today / folder
+    if colour:
+        base = base / colour
+    base.mkdir(parents=True, exist_ok=True)
+    return str(base)
+
+# ── Image helpers ──────────────────────────────────────────────────────────────
 def get_img(img_json, img_field):
     if img_json:
         try:
@@ -36,7 +66,7 @@ def get_img(img_json, img_field):
         except: pass
     return (img_field or "").strip() or None
 
-def get_colour(colour_json):
+def get_colour_hex(colour_json):
     if colour_json:
         try:
             d = json.loads(colour_json)
@@ -69,9 +99,10 @@ def make_zone(img_json, img_field, text_raw, fonts_json, colours_json, preview_i
         "font_ps_name":   ps,
         "font_family":    fam,
         "font_style":     sty,
-        "colour_hex":     get_colour(colours_json),
+        "colour_hex":     get_colour_hex(colours_json),
     }
 
+# ── Main ───────────────────────────────────────────────────────────────────────
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -95,7 +126,6 @@ print(f"Found {len(rows)} orders. Writing jobs...\n")
 
 for row in rows:
     oid, sku = row[0], row[1]
-    product  = detect_product(sku)
     zones    = {}
 
     front = make_zone(row[2], row[3], row[4], row[5], row[6], row[7])
@@ -103,8 +133,8 @@ for row in rows:
     pi    = get_img(row[14], row[15])
     pp    = (row[16] or "").strip() or None
 
-    if front: zones["front"] = front
-    if back:  zones["back"]  = back
+    if front: zones["front"]  = front
+    if back:  zones["back"]   = back
     if pi:
         zones["pocket"] = {
             "customer_image": ensure_image(pi),
@@ -116,16 +146,22 @@ for row in rows:
     if not zones:
         print(f"[SKIP] {oid}"); continue
 
+    # Route to correct output folder
+    out_folder = get_output_folder(sku, len(zones))
+    out_path   = f"{out_folder}\\{oid}.psd"
+
     job = {
         "order_id":    oid,
+        "sku":         sku,
         "combined":    True,
         "template":    "C:\\Varsany\\template\\combined_template.psd",
         "zones":       zones,
-        "output_path": f"C:\\Varsany\\Output\\ps_test\\{oid}.psd",
+        "output_path": out_path,
         "dpi":         320
     }
     (JOBS_DIR / f"{oid}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
-    fonts_used = list(set(d['font_family'] for d in zones.values()))
-    print(f"[JOB] {oid} | zones:{list(zones.keys())} | fonts:{fonts_used}")
+    colour = get_colour_from_sku(sku) or "no-colour"
+    folder_name = "Automated" if len(zones) >= 2 else ("DTF Kids Hoodie" if any(k in sku.lower() for k in ["kidshoo","kidshood","gymhoodie"]) else "DTF Front")
+    print(f"[JOB] {oid} | {folder_name}\\{colour} | zones:{list(zones.keys())}")
 
 print("\nAll jobs written.")
