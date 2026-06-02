@@ -535,15 +535,16 @@ async function createAllTemplates(){
             depth:8,
             profile:"U.S. Web Coated (SWOP) v2"
           }}]);
+          // Always use app.documents[0] — most recently created doc
+          const newDoc = app.documents[0];
           const f=await tplFolder.createFile(name+"_combined.psd",{overwrite:true});
           const token=fs.createSessionToken(f);
           await bp([{_obj:"save",as:{_obj:"photoshop35Format",maximizeCompatibility:true},in:{_path:token,_kind:"local"}}]);
-          const d = app.activeDocument;
-          if(d) await d.close(constants.SaveOptions.DONOTSAVECHANGES);
+          await newDoc.close(constants.SaveOptions.DONOTSAVECHANGES);
           log("Created: "+name+"_combined.psd ("+wpx+"x15000px)");
         }catch(e){
           log("Error: "+name+" — "+e.message,true);
-          if(app.documents.length>0) try{await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}
+          if(app.documents.length>0) try{await app.documents[0].close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}
         }
       }
     },{commandName:"Create all product templates"});
