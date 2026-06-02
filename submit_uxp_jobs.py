@@ -1,4 +1,4 @@
-import sys, json, urllib.request
+import sys, json, urllib.request, os
 from datetime import date
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
@@ -8,56 +8,35 @@ from pathlib import Path
 JOBS_DIR   = Path(r"C:\Varsany\jobs")
 IMAGES_DIR = Path(r"C:\Varsany\Temp\OrderImages")
 BASE_URL   = "http://www.crssoft.co.uk/CustomOrderImages/"
-OUTPUT_ROOT = Path(r"C:\Varsany\Output")
+OUTPUT_ROOT = Path(os.environ.get("VARSANY_OUTPUT", r"C:\Varsany\Output"))
 
-# ── Colour extraction from SKU ─────────────────────────────────────────────────
-COLOUR_MAP = {
-    "Blk": "black", "Black": "black",
-    "Wht": "white", "White": "white",
-    "Nvy": "navy",  "Navy": "navy",
-    "Pnk": "pink",  "Pink": "pink",
-    "Red": "red",   "Blu": "blue",  "Blue": "blue",
-    "Grn": "green", "Gry": "grey",  "Grey": "grey",
-    "Pur": "purple","Brn": "brown", "Org": "orange",
-    "Grph": "graphite", "Ivry": "ivory", "Ivo": "ivory",
-    "Fch": "fuchsia", "Yel": "yellow", "Tl": "teal",
-    "Kki": "khaki", "Cml": "camel", "Camo": "camo",
-}
+def get_output_path(sku, zone_count, order_id):
+    """Build output path: Output\YYYY-MM-DD\{category}\{colour?}\OrderID.psd"""
+    today   = date.today().strftime("%Y-%m-%d")
+    sku_low = sku.lower()
 
-def get_colour_from_sku(sku):
-    """Extract garment colour from SKU string."""
-    sku_parts = sku.replace("-", "_").split("_")
-    for part in sku_parts:
-        for code, colour in COLOUR_MAP.items():
-            if part == code or part.startswith(code):
-                return colour
-    return None
-
-def get_output_folder(sku, zone_count):
-    """
-    Route to correct output subfolder:
-      - multi-zone (2+)        → Automated\{colour}\ or Automated\
-      - kids hoodie single     → DTF Kids Hoodie\{colour}\ or DTF Kids Hoodie\
-      - everything else single → DTF Front\{colour}\ or DTF Front\
-    """
-    today     = date.today().strftime("%Y-%m-%d")
-    colour    = get_colour_from_sku(sku)
-    sku_lower = sku.lower()
-
+    # Level 2 — Category (check in order)
     if zone_count >= 2:
-        folder = "Automated"
-    elif any(k in sku_lower for k in ["kidshoo", "kidshood", "gymhoodie"]):
-        folder = "DTF Kids Hoodie"
+        category = "Automated"
+    elif any(k in sku_low for k in ["kidshoo", "kidshood", "gymhoodie"]):
+        category = "DTF Kids Hoodie"
     else:
-        folder = "DTF Front"
+        category = "DTF Front"
 
-    base = OUTPUT_ROOT / today / folder
+    # Level 3 — Colour: only black or white, everything else = no subfolder
+    if "blk" in sku_low:
+        colour = "black"
+    elif "wht" in sku_low:
+        colour = "white"
+    else:
+        colour = None
+
+    folder = OUTPUT_ROOT / today / category
     if colour:
-        base = base / colour
-    base.mkdir(parents=True, exist_ok=True)
-    return str(base)
+        folder = folder / colour
+    folder.mkdir(parents=True, exist_ok=True)
+    return str(folder / f"{order_id}.psd")
 
-# ── Image helpers ──────────────────────────────────────────────────────────────
 def get_img(img_json, img_field):
     if img_json:
         try:
@@ -83,7 +62,7 @@ def ensure_image(fname):
             urllib.request.urlretrieve(BASE_URL + fname, dest)
             print(f"  Downloaded: {fname}")
         except Exception as e:
-            print(f"  FAILED: {fname} — {e}")
+            print(f"  FAILED: {fname} -- {e}")
             return None
     return fname
 
@@ -102,7 +81,6 @@ def make_zone(img_json, img_field, text_raw, fonts_json, colours_json, preview_i
         "colour_hex":     get_colour_hex(colours_json),
     }
 
-# ── Main ───────────────────────────────────────────────────────────────────────
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -126,7 +104,7 @@ print(f"Found {len(rows)} orders. Writing jobs...\n")
 
 for row in rows:
     oid, sku = row[0], row[1]
-    zones    = {}
+    zones = {}
 
     front = make_zone(row[2], row[3], row[4], row[5], row[6], row[7])
     back  = make_zone(row[8], row[9], row[10], row[11], row[12], row[13])
@@ -146,9 +124,7 @@ for row in rows:
     if not zones:
         print(f"[SKIP] {oid}"); continue
 
-    # Route to correct output folder
-    out_folder = get_output_folder(sku, len(zones))
-    out_path   = f"{out_folder}\\{oid}.psd"
+    out_path = get_output_path(sku, len(zones), oid)
 
     job = {
         "order_id":    oid,
@@ -160,8 +136,9 @@ for row in rows:
         "dpi":         320
     }
     (JOBS_DIR / f"{oid}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
-    colour = get_colour_from_sku(sku) or "no-colour"
-    folder_name = "Automated" if len(zones) >= 2 else ("DTF Kids Hoodie" if any(k in sku.lower() for k in ["kidshoo","kidshood","gymhoodie"]) else "DTF Front")
-    print(f"[JOB] {oid} | {folder_name}\\{colour} | zones:{list(zones.keys())}")
+    # Show routing info
+    parts = Path(out_path).parts
+    routing = "\\".join(parts[-3:-1])  # date\category or date\category\colour
+    print(f"[JOB] {oid} | {routing} | zones:{list(zones.keys())}")
 
 print("\nAll jobs written.")
