@@ -113,16 +113,17 @@ for row in rows:
     if not zones:
         print(f"[SKIP] {oid} — no zones"); continue
 
-    for zone_name, zone_data in zones.items():
-        w, h = canvas.get(zone_name, canvas.get("front", (3780,3780)))
-        job = {
-            "order_id":    f"{oid}_{zone_name}",
-            "template":    "C:\\Varsany\\template\\adulttshirt.psd",
-            "zones":       {zone_name: zone_data},
-            "output_path": f"C:\\Varsany\\Output\\ps_test\\{oid}_{zone_name}.psd",
-            "canvas_w_px": w, "canvas_h_px": h, "dpi": 320
-        }
-        (JOBS_DIR / f"{oid}_{zone_name}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
-        print(f"[JOB] {oid} — {zone_name} | font:{zone_data['font_family']} | colour:{zone_data['colour_hex']}")
+    # Write ONE combined job per order with all zones
+    job = {
+        "order_id":    oid,
+        "combined":    True,
+        "template":    "C:\\Varsany\\template\\combined_template.psd",
+        "zones":       zones,
+        "output_path": f"C:\\Varsany\\Output\\ps_test\\{oid}_combined.psd",
+        "dpi":         320
+    }
+    (JOBS_DIR / f"{oid}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
+    zone_summary = " + ".join(f"{z}({d['font_family']},{d['colour_hex']})" for z,d in zones.items())
+    print(f"[JOB] {oid} — {zone_summary}")
 
 print("\nAll jobs written.")

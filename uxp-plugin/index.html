@@ -4,29 +4,34 @@
 <style>
   body{font-family:sans-serif;background:#2b2b2b;color:#ccc;margin:0;padding:10px;font-size:12px}
   #status{color:#7ec87e;font-weight:bold;margin-bottom:8px;font-size:13px}
-  #log{font-size:10px;color:#999;max-height:120px;overflow-y:auto;border-top:1px solid #444;padding-top:6px;margin-top:6px}
+  #log{font-size:10px;color:#999;max-height:140px;overflow-y:auto;border-top:1px solid #444;padding-top:6px;margin-top:6px}
   .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#7ec87e;margin-right:5px;animation:pulse 1.5s infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
   .err{color:#e24b4a}
+  button{display:block;width:100%;margin:3px 0;padding:6px 10px;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;text-align:left}
 </style>
 </head>
 <body>
 <div id="status"><span class="dot"></span>Starting...</div>
-<button id="pickBtn" style="margin:4px 0;padding:5px 10px;background:#5a3a6a;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px">📁 Set C:\Varsany Root</button>
-<button id="buildBtn" style="margin:4px 0;padding:5px 10px;background:#3a6ea5;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px">Build Templates</button>
+<button id="pickBtn"        style="background:#5a3a6a">📁 Set C:\Varsany Root</button>
+<button id="mkCombinedBtn"  style="background:#2a6a3a">🔨 Create Combined Template</button>
+<button id="buildBtn"       style="background:#3a6ea5">Build Zone Templates</button>
 <div id="log"></div>
 <script>
 const {app,core,action,constants} = require("photoshop");
 const uxp = require("uxp");
 const fs  = uxp.storage.localFileSystem;
 
-const PLUGIN_VERSION = "v2.2-onecall";
-const POLL_MS = 3000;
-// VARSANY_ROOT = C:\Varsany  (picked once by user, all paths resolved from here)
-let VARSANY_ROOT=null;
-let DATA_FOLDER=null, JOBS_FOLDER=null, DONE_FOLDER=null, ERROR_FOLDER=null;
+const PLUGIN_VERSION = "v3.0-combined";
+const POLL_MS   = 3000;
+const LABEL_PX  = 252;  // 2cm at 320dpi
+const GAP_PX    = 126;  // 1cm gap between zones
+const CANVAS_W  = 3780; // default canvas width px
+
+let VARSANY_ROOT=null, DATA_FOLDER=null, JOBS_FOLDER=null, DONE_FOLDER=null, ERROR_FOLDER=null;
 let processing = false;
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function ts(){const d=new Date(),p=n=>String(n).padStart(2,"0");return`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;}
 function log(msg,isErr){
   console.log("[Varsany] "+msg);
@@ -34,136 +39,231 @@ function log(msg,isErr){
   if(!isErr) document.getElementById("status").innerHTML='<span class="dot"></span>'+msg;
 }
 async function getOrCreate(parent,name){try{return await parent.getEntry(name);}catch(e){return await parent.createFolder(name);}}
+async function readJSON(e){return JSON.parse(await e.read({format:uxp.storage.formats.utf8}));}
+async function writeJSON(folder,filename,data){const f=await folder.createFile(filename,{overwrite:true});await f.write(JSON.stringify(data,null,2),{format:uxp.storage.formats.utf8});}
 
-// ── Token persistence via plugin folder ───────────────────────────────────────
-async function saveRootToken(token){
-  // Token is now saved directly inside C:\Varsany by pickRoot
-}
+// ── Token / folder init ───────────────────────────────────────────────────────
 async function loadRootToken(){
-  // We can't read from C:\Varsany without permission yet.
-  // Token is restored via getEntryForPersistentToken after first pick.
-  // UXP persistent tokens survive restarts — try the last known token.
-  try{
-    // Try reading token file from C:\Varsany via URL (may work if PS cached it)
-    const varsany = await fs.getEntryWithUrl("file:///C:/Varsany");
-    const tf = await varsany.getEntry("uxp_token.txt");
-    return await tf.read({format:uxp.storage.formats.utf8});
-  }catch(e){ return null; }
+  try{const v=await fs.getEntryWithUrl("file:///C:/Varsany");const tf=await v.getEntry("uxp_token.txt");return await tf.read({format:uxp.storage.formats.utf8});}
+  catch(e){return null;}
 }
-
-// ── Navigate from VARSANY_ROOT by relative path ───────────────────────────────
-async function getEntry(absPath){
-  if(VARSANY_ROOT){
-    const rel = absPath.replace(/\\/g,"/").replace(/^[A-Za-z]:\/Varsany\//,"");
-    const parts = rel.split("/").filter(Boolean);
-    let e = VARSANY_ROOT;
-    for(const p of parts) e = await e.getEntry(p);
-    return e;
-  }
-  // Fallback: file URL
-  const url = "file:///"+absPath.replace(/\\/g,"/").replace(/^\/+/,"");
-  return await fs.getEntryWithUrl(url);
+async function setupFolders(root){
+  VARSANY_ROOT=root; DATA_FOLDER=root;
+  JOBS_FOLDER  = await getOrCreate(root,"jobs");
+  DONE_FOLDER  = await getOrCreate(root,"done");
+  ERROR_FOLDER = await getOrCreate(root,"error");
 }
-
-async function setupFolders(){
-  DATA_FOLDER  = await getOrCreate(VARSANY_ROOT,"photoshop_bridge");
-  JOBS_FOLDER  = await getOrCreate(DATA_FOLDER,"jobs");
-  DONE_FOLDER  = await getOrCreate(DATA_FOLDER,"done");
-  ERROR_FOLDER = await getOrCreate(DATA_FOLDER,"error");
-  await getOrCreate(DATA_FOLDER,"images");
-  log("Ready — root: "+VARSANY_ROOT.nativePath);
-}
-
 async function initFolders(){
-  // Try 1: persistent token
   try{
-    const token = await loadRootToken();
-    if(token){
-      VARSANY_ROOT = await fs.getEntryForPersistentToken(token.trim());
-      JOBS_FOLDER  = await getOrCreate(VARSANY_ROOT,"jobs");
-      DONE_FOLDER  = await getOrCreate(VARSANY_ROOT,"done");
-      ERROR_FOLDER = await getOrCreate(VARSANY_ROOT,"error");
-      DATA_FOLDER  = VARSANY_ROOT;
-      log("Ready: "+VARSANY_ROOT.nativePath);
-      return;
-    }
-  }catch(e){ log("Token restore failed: "+e.message, true); }
-  // Try 2: direct URL (works if PS already has permission from prior session)
+    const token=await loadRootToken();
+    if(token){const r=await fs.getEntryForPersistentToken(token.trim());await setupFolders(r);log("Ready: "+r.nativePath);return;}
+  }catch(e){log("Token failed: "+e.message,true);}
   try{
-    const root = await fs.getEntryWithUrl("file:///C:/Varsany");
-    VARSANY_ROOT = root; DATA_FOLDER = root;
-    JOBS_FOLDER  = await getOrCreate(root,"jobs");
-    DONE_FOLDER  = await getOrCreate(root,"done");
-    ERROR_FOLDER = await getOrCreate(root,"error");
-    log("Ready: C:\\Varsany (via URL)");
-    return;
-  }catch(e2){ /* URL access denied */ }
-  log("📁 Click 'Set C:\\Varsany Root' to start", true);
+    const r=await fs.getEntryWithUrl("file:///C:/Varsany");await setupFolders(r);log("Ready: C:\\Varsany (URL)");return;
+  }catch(e){}
+  log("📁 Click 'Set C:\\Varsany Root' to start",true);
 }
-
 async function pickRoot(){
   try{
-    const folder = await fs.getFolder();
-    if(!folder){log("No folder selected.",true);return;}
-    VARSANY_ROOT = folder;
-    DATA_FOLDER  = folder;
-    JOBS_FOLDER  = await getOrCreate(folder,"jobs");
-    DONE_FOLDER  = await getOrCreate(folder,"done");
-    ERROR_FOLDER = await getOrCreate(folder,"error");
-    // Save token inside C:\Varsany itself
-    const token = fs.createPersistentToken(folder);
-    const tf = await folder.createFile("uxp_token.txt",{overwrite:true});
+    const folder=await fs.getFolder();if(!folder){log("No folder selected.",true);return;}
+    await setupFolders(folder);
+    const token=fs.createPersistentToken(folder);
+    const tf=await folder.createFile("uxp_token.txt",{overwrite:true});
     await tf.write(token,{format:uxp.storage.formats.utf8});
     log("Ready: "+folder.nativePath);
   }catch(e){log("Pick error: "+e.message,true);}
 }
 
-// ── Image lookup — searches C:\Varsany\Temp\OrderImages ──────────────────────
+// ── Path resolver ─────────────────────────────────────────────────────────────
+async function getEntry(absPath){
+  if(VARSANY_ROOT){
+    const rel=absPath.replace(/\\/g,"/").replace(/^[A-Za-z]:\/Varsany\//,"");
+    const parts=rel.split("/").filter(Boolean);
+    let e=VARSANY_ROOT;
+    for(const p of parts) e=await e.getEntry(p);
+    return e;
+  }
+  return await fs.getEntryWithUrl("file:///"+absPath.replace(/\\/g,"/").replace(/^\/+/,""));
+}
+async function getOutputEntry(outputPath){
+  try{
+    const parts=outputPath.replace(/\\/g,"/").split("/");
+    const filename=parts.pop();
+    const dir=await getEntry(parts.join("/"));
+    try{return await dir.getEntry(filename);}catch(e){return await dir.createFile(filename,{overwrite:true});}
+  }catch(e){
+    const outFolder=await getOrCreate(DATA_FOLDER,"output");
+    const filename=outputPath.replace(/\\/g,"/").split("/").pop();
+    try{return await outFolder.getEntry(filename);}catch(e2){return await outFolder.createFile(filename,{overwrite:true});}
+  }
+}
 async function getImageEntry(imgPath){
-  const baseName = imgPath.replace(/\\/g,"/").split("/").pop();
-  const tempFolder = await VARSANY_ROOT.getEntry("Temp").catch(()=>null) ||
-                     await getOrCreate(VARSANY_ROOT,"Temp");
-  const imgFolder  = await tempFolder.getEntry("OrderImages").catch(()=>null) ||
-                     await getOrCreate(tempFolder,"OrderImages");
-  const entries = await imgFolder.getEntries();
-  const match = entries.find(e=>e.name===baseName||e.name.endsWith("_"+baseName));
-  if(!match) throw new Error("Image not found in Temp\\OrderImages: "+baseName);
+  const baseName=imgPath.replace(/\\/g,"/").split("/").pop();
+  const tmp=await VARSANY_ROOT.getEntry("Temp").catch(()=>getOrCreate(VARSANY_ROOT,"Temp"));
+  const imgs=await tmp.getEntry("OrderImages").catch(()=>getOrCreate(tmp,"OrderImages"));
+  const entries=await imgs.getEntries();
+  const match=entries.find(e=>e.name===baseName||e.name.endsWith("_"+baseName));
+  if(!match) throw new Error("Image not found: "+baseName);
   return match;
 }
 
-// ── Output entry — navigated from VARSANY_ROOT ────────────────────────────────
-async function getOutputEntry(outputPath){
-  try{
-    if(!VARSANY_ROOT) throw new Error("VARSANY_ROOT not set — pick folder first");
-    const parts = outputPath.replace(/\\/g,"/").split("/");
-    const filename = parts.pop();
-    const dirPath = parts.join("/");
-    const dirEntry = await getEntry(dirPath);
-    try{return await dirEntry.getEntry(filename);}
-    catch(e){return await dirEntry.createFile(filename,{overwrite:true});}
-  }catch(e){
-    log("Output fallback to PluginData: "+e.message,true);
-    const outFolder = await getOrCreate(DATA_FOLDER,"output");
-    const filename = outputPath.replace(/\\/g,"/").split("/").pop();
-    try{return await outFolder.getEntry(filename);}
-    catch(e2){return await outFolder.createFile(filename,{overwrite:true});}
+// ── batchPlay helpers ─────────────────────────────────────────────────────────
+async function bp(desc){return await action.batchPlay(desc,{synchronousExecution:true});}
+
+// Move layer to Y offset using translate
+async function moveLayerToY(currentY, targetY){
+  const delta = targetY - currentY;
+  if(Math.abs(delta) < 1) return;
+  await bp([{_obj:"move",_target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],
+    to:{_obj:"offset",horizontal:{_unit:"pixelsUnit",_value:0},vertical:{_unit:"pixelsUnit",_value:delta}}}]);
+}
+
+// Get layer bounds in pixels
+async function getLayerBounds(){
+  const r=await bp([{_obj:"get",_target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],_options:{dialogOptions:"dontDisplay"}}]);
+  const b=r[0].bounds;
+  return {top:b.top._value,left:b.left._value,right:b.right._value,bottom:b.bottom._value,
+          w:Math.abs(b.right._value-b.left._value),h:Math.abs(b.bottom._value-b.top._value)};
+}
+
+// Get doc size in pixels
+async function getDocSize(){
+  const r=await bp([{_obj:"get",_target:[{_ref:"document",_enum:"ordinal",_value:"targetEnum"}],_options:{dialogOptions:"dontDisplay"}}]);
+  const res=r[0].resolution._value;
+  return {w:Math.round(r[0].width._value*res/72), h:Math.round(r[0].height._value*res/72), res};
+}
+
+// Add black label text at given Y offset (top of label strip)
+async function addLabel(labelText, yTop, canvasW){
+  await bp([{_obj:"make",_target:[{_ref:"textLayer"}],
+    using:{_obj:"textLayer",textKey:labelText,
+      textClickPoint:{_obj:"paint",horizontal:{_unit:"percentUnit",_value:1},vertical:{_unit:"percentUnit",_value:1}},
+      textStyleRange:[{_obj:"textStyleRange",from:0,to:labelText.length,
+        textStyle:{_obj:"textStyle",fontPostScriptName:"Arial-BoldMT",fontName:"Arial",fontStyleName:"Bold",
+          size:{_unit:"pointsUnit",_value:24},color:{_obj:"RGBColor",red:0,green:0,blue:0}}
+      }]
+    }
+  }]);
+  await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Label_"+labelText}}]);
+  // Align left then move to correct Y
+  await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSLefts"},alignToCanvas:true}]);
+  const lb = await getLayerBounds();
+  await moveLayerToY(lb.top, yTop + Math.round(LABEL_PX/2) - Math.round((lb.bottom-lb.top)/2));
+  await bp([{_obj:"move",_target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],
+    to:{_obj:"offset",horizontal:{_unit:"pixelsUnit",_value:GAP_PX},vertical:{_unit:"pixelsUnit",_value:0}}}]);
+}
+
+// ── Process one zone: place image + text at given Y offset ────────────────────
+// Returns the bottom Y of the zone content
+async function processZone(doc, zone, data, imgEntry, yOffset, docW, docH, res){
+  let zoneBottom = yOffset;
+
+  // Zone height — use canvas width as zone height (square for tshirt)
+  const zoneH = docW; // 3780px for adulttshirt
+
+  // Place image if available
+  if(imgEntry){
+    const imgToken = fs.createSessionToken(imgEntry);
+    await bp([{_obj:"placeEvent",null:{_path:imgToken,_kind:"local"},freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}}]);
+
+    // Get placed bounds
+    const pb = await getLayerBounds();
+    const lw = pb.w, lh = pb.h;
+
+    // Scale to fit zone width x zone height
+    if(lw>0 && lh>0){
+      const scalePct = Math.min(docW/lw, zoneH/lh)*100;
+      await bp([{_obj:"transform",null:{_ref:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]},
+        freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"},
+        width:{_unit:"percentUnit",_value:scalePct},height:{_unit:"percentUnit",_value:scalePct},
+        constrainProportions:true,interfaceIconFrameDimmed:{_enum:"interpolationType",_value:"bicubicAutomatic"}}]);
+
+      // Centre horizontally
+      await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
+        using:{_enum:"alignDistributeSelector",_value:"ADSCentersH"},alignToCanvas:true}]);
+
+      // Move to correct Y
+      const pb2 = await getLayerBounds();
+      await moveLayerToY(pb2.top, yOffset);
+      zoneBottom = yOffset + pb2.h;
+    }
+
+    // Rasterize
+    await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
+    await doc.layers[0].move(doc.layers[doc.layers.length-1],"placeBefore");
+    log("Placed image: "+zone);
   }
+
+  // Set text if available
+  if(data.text_lines?.length){
+    const textLayerName = "Text_"+zone+"_"+Date.now();
+    // Create new text layer
+    const text = data.text_lines.join("\r");
+    const hex  = data.colour_hex||"#ffffff";
+    const cr=parseInt(hex.slice(1,3),16),cg=parseInt(hex.slice(3,5),16),cb=parseInt(hex.slice(5,7),16);
+    const fontPS     = data.font_ps_name  || "Arial-BoldMT";
+    const fontFamily = data.font_family   || "Arial";
+    const fontStyle  = data.font_style    || "Bold";
+
+    // Make a text layer
+    await bp([{_obj:"make",_target:[{_ref:"textLayer"}],
+      using:{_obj:"textLayer",textKey:text,
+        textClickPoint:{_obj:"paint",horizontal:{_unit:"percentUnit",_value:50},vertical:{_unit:"percentUnit",_value:50}},
+        textStyleRange:[{_obj:"textStyleRange",from:0,to:text.length,
+          textStyle:{_obj:"textStyle",fontPostScriptName:fontPS,fontName:fontFamily,fontStyleName:fontStyle,
+            size:{_unit:"pointsUnit",_value:100},color:{_obj:"RGBColor",red:cr,green:cg,blue:cb},
+            autoKern:{_enum:"autoKern",_value:"metricsKern"},tracking:0}
+        }],
+        paragraphStyleRange:[{_obj:"paragraphStyleRange",from:0,to:text.length,
+          paragraphStyle:{_obj:"paragraphStyle",alignment:{_enum:"alignmentType",_value:"center"}}
+        }]
+      }
+    }]);
+    await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:textLayerName}}]);
+
+    // Auto-size to ~80% canvas width
+    const layer = doc.layers.find(l=>l.name===textLayerName);
+    if(layer){
+      const targetPx = docW * 0.80;
+      let sizePt = 100;
+      for(let pass=0;pass<2;pass++){
+        const lb = await getLayerBounds();
+        const wPx = lb.w||1;
+        sizePt = Math.min(Math.max(sizePt*(targetPx/wPx),20),400);
+        await bp([{_obj:"set",null:{_ref:[{_ref:"layer",_name:textLayerName}]},
+          to:{_obj:"textLayer",textKey:text,
+            textStyleRange:[{_obj:"textStyleRange",from:0,to:text.length,
+              textStyle:{_obj:"textStyle",fontPostScriptName:fontPS,fontName:fontFamily,fontStyleName:fontStyle,
+                size:{_unit:"pointsUnit",_value:sizePt},color:{_obj:"RGBColor",red:cr,green:cg,blue:cb}}
+            }]
+          }
+        }]);
+      }
+
+      // Centre H, place near bottom of zone with margin
+      await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
+        using:{_enum:"alignDistributeSelector",_value:"ADSCentersH"},alignToCanvas:true}]);
+
+      const textBounds = await getLayerBounds();
+      const textH = textBounds.h;
+      const margin = Math.round(zoneH * 0.04);
+      const textY = imgEntry ? (zoneBottom - textH - margin) : (yOffset + Math.round((zoneH-textH)/2));
+      await moveLayerToY(textBounds.top, textY);
+      log("Text set: "+zone+" font:"+fontFamily+" ("+Math.round(sizePt)+"pt)");
+    }
+  }
+
+  return zoneBottom;
 }
 
-function findLayer(layers,name){
-  for(const l of layers){if(l.name===name)return l;if(l.layers){const f=findLayer(l.layers,name);if(f)return f;}}
-  return null;
-}
-
-async function readJSON(entry){return JSON.parse(await entry.read({format:uxp.storage.formats.utf8}));}
-async function writeJSON(folder,filename,data){const f=await folder.createFile(filename,{overwrite:true});await f.write(JSON.stringify(data,null,2),{format:uxp.storage.formats.utf8});}
-
+// ── Main job processor ────────────────────────────────────────────────────────
 async function processJob(jobEntry){
   let job, orderId=jobEntry.name.replace(".json","");
   try{job=await readJSON(jobEntry);orderId=job.order_id||orderId;}
   catch(e){await writeJSON(ERROR_FOLDER,jobEntry.name,{order_id:orderId,error:"Parse: "+e.message,failed_at:ts()});await jobEntry.delete();return;}
   log("Processing: "+orderId);
 
+  const isCombined = job.combined === true;
   let tplEntry, imgEntries={}, outEntry;
   try{
     tplEntry = await getEntry(job.template);
@@ -180,163 +280,133 @@ async function processJob(jobEntry){
   await core.executeAsModal(async()=>{
     let doc=null;
     try{
-      // Open template
       const tplToken=fs.createSessionToken(tplEntry);
-      await action.batchPlay([{_obj:"open",null:{_path:tplToken,_kind:"local"},_options:{dialogOptions:"dontDisplay"}}],{synchronousExecution:true});
+      await bp([{_obj:"open",null:{_path:tplToken,_kind:"local"},_options:{dialogOptions:"dontDisplay"}}]);
       doc=app.activeDocument;
       log("Opened: "+doc.name);
 
-      // Read canvas size in pixels once — used for scaling and canvas expand
-      const docProps = await action.batchPlay([{
-        _obj:"get",_target:[{_ref:"document",_enum:"ordinal",_value:"targetEnum"}],
-        _options:{dialogOptions:"dontDisplay"}
-      }],{synchronousExecution:true});
-      const res  = docProps[0].resolution._value;
-      const docW = Math.round(docProps[0].width._value  * res / 72);
-      const docH = Math.round(docProps[0].height._value * res / 72);
-      // PHASE 1: Place + fit + centre each image
-      for(const [zone,data] of Object.entries(job.zones)){
-        if(imgEntries[zone]){
-          try{
-            const imgToken=fs.createSessionToken(imgEntries[zone]);
-            await action.batchPlay([{_obj:"placeEvent",null:{_path:imgToken,_kind:"local"},freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}}],{synchronousExecution:true});
-            // Layer bounds via batchPlay
-            const layerProps = await action.batchPlay([{
-              _obj:"get",
-              _target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],
-              _options:{dialogOptions:"dontDisplay"}
-            }],{synchronousExecution:true});
-            const b = layerProps[0].bounds;
-            const lw = Math.abs(b.right._value - b.left._value);
-            const lh = Math.abs(b.bottom._value - b.top._value);
-            if(lw>0&&lh>0){
-              const scalePct=Math.min(docW/lw,docH/lh)*100;
-              await action.batchPlay([{_obj:"transform",null:{_ref:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]},freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"},width:{_unit:"percentUnit",_value:scalePct},height:{_unit:"percentUnit",_value:scalePct},constrainProportions:true,interfaceIconFrameDimmed:{_enum:"interpolationType",_value:"bicubicAutomatic"}}],{synchronousExecution:true});
-              for(const dir of ["ADSCentersH","ADSCentersV"]){
-                await action.batchPlay([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:dir},alignToCanvas:true}],{synchronousExecution:true});
-              }
-              log("Fit: "+zone+" ("+Math.round(scalePct)+"%)");
-            }
-            await action.batchPlay([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}],{synchronousExecution:true});
-            await doc.layers[0].move(doc.layers[1],"placeAfter");
-            log("Placed: "+zone);
-          }catch(e){log("Place error ("+zone+"): "+e.message,true);}
+      const {w:docW, h:docH, res} = await getDocSize();
+
+      if(isCombined){
+        // ── COMBINED MODE: stack zones vertically ─────────────────────────────
+        let currentY = 0;
+        const zones = Object.entries(job.zones);
+
+        for(const [zone, data] of zones){
+          // Add label strip for this zone
+          await addLabel(zone.toUpperCase(), currentY, docW);
+          currentY += LABEL_PX;
+
+          // Place image + text for this zone
+          const zoneH = docW; // square zone
+          const zoneBottom = await processZone(doc, zone, data, imgEntries[zone], currentY, docW, zoneH, res);
+          currentY = zoneBottom + GAP_PX;
+
+          log("Zone done: "+zone+" bottom at "+zoneBottom);
         }
-      }
 
-      // PHASE 2: Set text
-      for(const [zone,data] of Object.entries(job.zones)){
-        if(data.text_lines?.length){
-          const layer=findLayer(doc.layers,"CustomerText_"+zone);
-          if(layer&&layer.kind==="text"){
-            const text=data.text_lines.join("\r");
-            const targetPx=docW*0.80;  // BUG FIX: use pixel docW not doc.width
-            const hex=data.colour_hex||"#ffffff";
-            const cr=parseInt(hex.slice(1,3),16),cg=parseInt(hex.slice(3,5),16),cb=parseInt(hex.slice(5,7),16);
-            const fontPS     = data.font_ps_name  || "Arial-BoldMT";
-            const fontFamily = data.font_family   || "Arial";
-            const fontStyle  = data.font_style    || "Bold";
+        // Crop canvas to actual used height
+        const finalH_pt = (currentY - GAP_PX) * 72 / res;
+        const docW_pt   = docW * 72 / res;
+        await bp([{_obj:"resizeCanvas",
+          width:{_unit:"pointsUnit",_value:docW_pt},
+          height:{_unit:"pointsUnit",_value:finalH_pt},
+          anchor:{_enum:"quadCenterState",_value:"QCSTopLeft"}
+        }]);
+        log("Cropped canvas to "+(currentY-GAP_PX)+"px");
 
-            async function applyText(sizePt){
-              // Set everything in ONE call — text + size + colour + font together
-              // Splitting into multiple calls causes PS to reset font to Myriad Pro
-              await action.batchPlay([{
-                _obj:"set",
-                null:{_ref:[{_ref:"layer",_name:"CustomerText_"+zone}]},
-                to:{_obj:"textLayer",
-                  textKey:text,
-                  textStyleRange:[{_obj:"textStyleRange",from:0,to:text.length,
-                    textStyle:{_obj:"textStyle",
-                      fontPostScriptName: fontPS,
-                      fontName:           fontFamily,
-                      fontStyleName:      fontStyle,
-                      size:{_unit:"pointsUnit",_value:sizePt},
-                      color:{_obj:"RGBColor",red:cr,green:cg,blue:cb},
-                      autoKern:{_enum:"autoKern",_value:"metricsKern"},
-                      tracking:0
-                    }
-                  }],
-                  paragraphStyleRange:[{_obj:"paragraphStyleRange",from:0,to:text.length,
-                    paragraphStyle:{_obj:"paragraphStyle",
-                      alignment:{_enum:"alignmentType",_value:"center"}
-                    }
-                  }]
-                }
-              }],{synchronousExecution:true});
-              log("Applied font: "+fontFamily+" ("+fontPS+")");
-            }
-
-            let sizePt=100;
+      } else {
+        // ── SINGLE ZONE MODE (existing behaviour) ─────────────────────────────
+        for(const [zone,data] of Object.entries(job.zones)){
+          if(imgEntries[zone]){
             try{
-              await applyText(sizePt);
-              // Auto-size: 2 passes to hit ~80% canvas width
-              for(let pass=0;pass<2;pass++){
-                const b0=layer.bounds;
-                const wPx=(b0.right-b0.left)||1;
-                sizePt=Math.min(Math.max(sizePt*(targetPx/wPx),20),400);
-                await applyText(sizePt);
+              const imgToken=fs.createSessionToken(imgEntries[zone]);
+              await bp([{_obj:"placeEvent",null:{_path:imgToken,_kind:"local"},freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}}]);
+              const pb=await getLayerBounds();
+              const lw=pb.w,lh=pb.h;
+              if(lw>0&&lh>0){
+                const scalePct=Math.min(docW/lw,docH/lh)*100;
+                await bp([{_obj:"transform",null:{_ref:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]},
+                  freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"},
+                  width:{_unit:"percentUnit",_value:scalePct},height:{_unit:"percentUnit",_value:scalePct},
+                  constrainProportions:true,interfaceIconFrameDimmed:{_enum:"interpolationType",_value:"bicubicAutomatic"}}]);
+                for(const dir of ["ADSCentersH","ADSCentersV"]){
+                  await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
+                    using:{_enum:"alignDistributeSelector",_value:dir},alignToCanvas:true}]);
+                }
+                log("Fit: "+zone+" ("+Math.round(scalePct)+"%)");
               }
-            }catch(e){log("Text error ("+zone+"): "+e.message,true);}
-
-            // Centre H
-            await action.batchPlay([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSCentersH"},alignToCanvas:true}],{synchronousExecution:true});
-
-            // Position V: bottom with margin if image, else centre
-            if(imgEntries[zone]){
-              await action.batchPlay([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSBottoms"},alignToCanvas:true}],{synchronousExecution:true});
-              const margin=Math.round(docH*0.04); // BUG FIX: use pixel docH
-              if(margin>0) await action.batchPlay([{_obj:"move",_target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],to:{_obj:"offset",horizontal:{_unit:"pixelsUnit",_value:0},vertical:{_unit:"pixelsUnit",_value:-margin}}}],{synchronousExecution:true});
-            }else{
-              await action.batchPlay([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSCentersV"},alignToCanvas:true}],{synchronousExecution:true});
-            }
-            log("Text set: "+zone+" font:"+fontPS+" colour:"+hex+" ("+Math.round(sizePt)+"pt)");
+              await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
+              await doc.layers[0].move(doc.layers[1],"placeAfter");
+              log("Placed: "+zone);
+            }catch(e){log("Place error ("+zone+"): "+e.message,true);}
           }
         }
+
+        for(const [zone,data] of Object.entries(job.zones)){
+          if(data.text_lines?.length){
+            const layer=doc.layers.find(l=>l.name==="CustomerText_"+zone)||
+                        (()=>{for(const l of doc.layers){if(l.name==="CustomerText_"+zone)return l;}})();
+            if(layer&&layer.kind==="text"){
+              const text=data.text_lines.join("\r");
+              const hex=data.colour_hex||"#ffffff";
+              const cr=parseInt(hex.slice(1,3),16),cg=parseInt(hex.slice(3,5),16),cb=parseInt(hex.slice(5,7),16);
+              const fontPS=data.font_ps_name||"Arial-BoldMT";
+              const fontFamily=data.font_family||"Arial";
+              const fontStyle=data.font_style||"Bold";
+              const targetPx=docW*0.80;
+              async function applyText(sizePt){
+                await bp([{_obj:"set",null:{_ref:[{_ref:"layer",_name:"CustomerText_"+zone}]},
+                  to:{_obj:"textLayer",textKey:text,
+                    textStyleRange:[{_obj:"textStyleRange",from:0,to:text.length,
+                      textStyle:{_obj:"textStyle",fontPostScriptName:fontPS,fontName:fontFamily,fontStyleName:fontStyle,
+                        size:{_unit:"pointsUnit",_value:sizePt},color:{_obj:"RGBColor",red:cr,green:cg,blue:cb},
+                        autoKern:{_enum:"autoKern",_value:"metricsKern"},tracking:0}
+                    }],
+                    paragraphStyleRange:[{_obj:"paragraphStyleRange",from:0,to:text.length,
+                      paragraphStyle:{_obj:"paragraphStyle",alignment:{_enum:"alignmentType",_value:"center"}}
+                    }]
+                  }
+                }]);
+              }
+              let sizePt=100;
+              await applyText(sizePt);
+              for(let pass=0;pass<2;pass++){const lb=await getLayerBounds();sizePt=Math.min(Math.max(sizePt*(targetPx/(lb.w||1)),20),400);await applyText(sizePt);}
+              await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSCentersH"},alignToCanvas:true}]);
+              if(imgEntries[zone]){
+                await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSBottoms"},alignToCanvas:true}]);
+                const margin=Math.round(docH*0.04);
+                if(margin>0) await bp([{_obj:"move",_target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],to:{_obj:"offset",horizontal:{_unit:"pixelsUnit",_value:0},vertical:{_unit:"pixelsUnit",_value:-margin}}}]);
+              }else{
+                await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSCentersV"},alignToCanvas:true}]);
+              }
+              log("Text: "+zone+" font:"+fontFamily+" ("+Math.round(sizePt)+"pt)");
+            }
+          }
+        }
+
+        // Label strip at top
+        const LABEL_PX2=252;
+        const newH_pt=(docH+LABEL_PX2)*72/res, docW_pt2=docW*72/res;
+        await bp([{_obj:"resizeCanvas",width:{_unit:"pointsUnit",_value:docW_pt2},height:{_unit:"pointsUnit",_value:newH_pt},anchor:{_enum:"quadCenterState",_value:"QCSBottomLeft"}}]);
+        const labelText=Object.keys(job.zones).map(z=>z.toUpperCase()).join(" / ");
+        await bp([{_obj:"make",_target:[{_ref:"textLayer"}],using:{_obj:"textLayer",textKey:labelText,
+          textClickPoint:{_obj:"paint",horizontal:{_unit:"percentUnit",_value:1},vertical:{_unit:"percentUnit",_value:1}},
+          textStyleRange:[{_obj:"textStyleRange",from:0,to:labelText.length,textStyle:{_obj:"textStyle",fontPostScriptName:"Arial-BoldMT",fontName:"Arial",fontStyleName:"Bold",size:{_unit:"pointsUnit",_value:24},color:{_obj:"RGBColor",red:0,green:0,blue:0}}}]
+        }}]);
+        await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"ZoneLabel"}}]);
+        await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSLefts"},alignToCanvas:true}]);
+        await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSTops"},alignToCanvas:true}]);
+        await bp([{_obj:"move",_target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],to:{_obj:"offset",horizontal:{_unit:"pixelsUnit",_value:126},vertical:{_unit:"pixelsUnit",_value:Math.round(LABEL_PX2/2)}}}]);
+        log("Label: "+labelText);
       }
 
-      // PHASE 3: Expand canvas 2cm at top for label strip
-      // At 320dpi: 2cm = 320/2.54*2 = 252px. Convert to points: px * 72 / res
-      const LABEL_PX = 252;
-      const newH_pt = (docH + LABEL_PX) * 72 / res;
-      const docW_pt = docW * 72 / res;
-      await action.batchPlay([{
-        _obj: "resizeCanvas",
-        width:  { _unit: "pointsUnit", _value: docW_pt },
-        height: { _unit: "pointsUnit", _value: newH_pt },
-        anchor: { _enum: "quadCenterState", _value: "QCSBottomLeft" }
-      }],{synchronousExecution:true});
-      log("Canvas expanded: +"+ LABEL_PX +"px at top");
-
-      // PHASE 4: Zone label — black text in the new top strip
-      const labelText=Object.keys(job.zones).map(z=>z.toUpperCase()).join(" / ");
-      await action.batchPlay([{
-        _obj:"make",_target:[{_ref:"textLayer"}],
-        using:{
-          _obj:"textLayer",
-          textKey:labelText,
-          textClickPoint:{_obj:"paint",horizontal:{_unit:"percentUnit",_value:1},vertical:{_unit:"percentUnit",_value:1}},
-          textStyleRange:[{_obj:"textStyleRange",from:0,to:labelText.length,
-            textStyle:{_obj:"textStyle",fontPostScriptName:"Arial-BoldMT",
-              size:{_unit:"pointsUnit",_value:24},
-              color:{_obj:"RGBColor",red:0,green:0,blue:0}
-            }
-          }]
-        }
-      }],{synchronousExecution:true});
-      await action.batchPlay([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"ZoneLabel"}}],{synchronousExecution:true});
-      // Align to top-left of expanded canvas, with small margin
-      await action.batchPlay([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSLefts"},alignToCanvas:true}],{synchronousExecution:true});
-      await action.batchPlay([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},using:{_enum:"alignDistributeSelector",_value:"ADSTops"},alignToCanvas:true}],{synchronousExecution:true});
-      // Nudge right 1cm and vertically centre in the 2cm strip
-      await action.batchPlay([{_obj:"move",_target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],to:{_obj:"offset",horizontal:{_unit:"pixelsUnit",_value:126},vertical:{_unit:"pixelsUnit",_value:Math.round(LABEL_PX/2)}}}],{synchronousExecution:true});
-      log("Label: "+labelText);
-
-      // Save PSD
+      // Save
       const outToken=fs.createSessionToken(outEntry);
-      await action.batchPlay([{_obj:"save",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"document"}]},in:{_path:outToken,_kind:"local"},as:{_obj:"photoshop35Format",embedProfiles:true}}],{synchronousExecution:true});
+      await bp([{_obj:"save",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"document"}]},in:{_path:outToken,_kind:"local"},as:{_obj:"photoshop35Format",embedProfiles:true}}]);
       log("Saved: "+outEntry.name);
       await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
-      doc=null;success=true;
+      doc=null; success=true;
     }catch(e){errorMsg=e.message||String(e);if(doc)try{await doc.close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}}
   },{commandName:"Process "+orderId});
 
@@ -361,42 +431,33 @@ async function pollJobs(){
   processing=false;
 }
 
-async function generateTemplates(){
+// ── Create combined template (3780 x 15000 blank CMYK PSD) ───────────────────
+async function createCombinedTemplate(){
   if(!VARSANY_ROOT){log("Pick C:\\Varsany root first",true);return;}
   if(processing){log("Busy",true);return;}
   processing=true;
   try{
-    const pf=await fs.getPluginFolder();const meta=await pf.getEntry("metadata");const cat=await meta.getEntry("catalog.json");
-    const catalog=JSON.parse(await cat.read({format:uxp.storage.formats.utf8}));
-    const items=[];
-    for(const [prod,zones] of Object.entries(catalog.products||{})){const front=zones.front;if(!front)continue;items.push({prod,w:front.width_px,h:front.height_px});}
-    const tplFolder=await getOrCreate(DATA_FOLDER,"templates");
-    log("Building "+items.length+" template(s)...");
     await core.executeAsModal(async()=>{
-      for(const s of items){
-        const name=s.prod+"_front.psd";
-        try{
-          await action.batchPlay([{_obj:"make",new:{_obj:"document",artboard:false,autoPromoteBackgroundLayer:false,preset:"Custom",width:{_unit:"pixelsUnit",_value:s.w},height:{_unit:"pixelsUnit",_value:s.h},resolution:{_unit:"densityUnit",_value:320},pixelScaleFactor:1,mode:{_class:"CMYKColorMode"},fill:{_enum:"fill",_value:"transparent"},depth:8,profile:"U.S. Web Coated (SWOP) v2"}}],{synchronousExecution:true});
-          await action.batchPlay([{_obj:"make",_target:[{_ref:"layer"}]}],{synchronousExecution:true});
-          await action.batchPlay([{_obj:"set",_target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],to:{_obj:"layer",name:"CustomerImage_front"}}],{synchronousExecution:true});
-          await action.batchPlay([{_obj:"make",_target:[{_ref:"textLayer"}],using:{_obj:"textLayer",textKey:"Text",textClickPoint:{_obj:"paint",horizontal:{_unit:"percentUnit",_value:50},vertical:{_unit:"percentUnit",_value:50}},textStyleRange:[{_obj:"textStyleRange",from:0,to:4,textStyle:{_obj:"textStyle",size:{_unit:"pointsUnit",_value:100}}}]}}],{synchronousExecution:true});
-          await action.batchPlay([{_obj:"set",_target:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}],to:{_obj:"layer",name:"CustomerText_front"}}],{synchronousExecution:true});
-          const f=await tplFolder.createFile(name,{overwrite:true});const token=fs.createSessionToken(f);
-          await action.batchPlay([{_obj:"save",as:{_obj:"photoshop35Format",maximizeCompatibility:true},in:{_path:token,_kind:"local"}}],{synchronousExecution:true});
-          await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);
-          log("Template: "+name);
-        }catch(e){log("Template error "+name+": "+e.message,true);try{await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}}
-      }
-    },{commandName:"Build templates"});
-    log("Templates done");
-  }catch(e){log("Build error: "+e.message,true);}
+      await bp([{_obj:"make",new:{_obj:"document",artboard:false,autoPromoteBackgroundLayer:false,
+        preset:"Custom",width:{_unit:"pixelsUnit",_value:3780},height:{_unit:"pixelsUnit",_value:15000},
+        resolution:{_unit:"densityUnit",_value:320},pixelScaleFactor:1,mode:{_class:"CMYKColorMode"},
+        fill:{_enum:"fill",_value:"transparent"},depth:8,profile:"U.S. Web Coated (SWOP) v2"}}]);
+      const tplFolder=await getOrCreate(VARSANY_ROOT,"template");
+      const f=await tplFolder.createFile("combined_template.psd",{overwrite:true});
+      const token=fs.createSessionToken(f);
+      await bp([{_obj:"save",as:{_obj:"photoshop35Format",maximizeCompatibility:true},in:{_path:token,_kind:"local"}}]);
+      await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);
+      log("Combined template created!");
+    },{commandName:"Create combined template"});
+  }catch(e){log("Error: "+e.message,true);}
   finally{processing=false;}
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 initFolders().finally(()=>{
   document.getElementById("pickBtn").addEventListener("click", pickRoot);
-  document.getElementById("buildBtn").addEventListener("click", generateTemplates);
+  document.getElementById("mkCombinedBtn").addEventListener("click", createCombinedTemplate);
+  document.getElementById("buildBtn").addEventListener("click", ()=>log("Use Build Templates from settings",true));
   setInterval(pollJobs, POLL_MS);
   log("Polling every "+(POLL_MS/1000)+"s ["+PLUGIN_VERSION+"]");
 });
