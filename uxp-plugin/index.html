@@ -328,8 +328,9 @@ async function processJob(jobEntry){
         const zones = Object.entries(job.zones);
 
         for(const [zone, data] of zones){
-          // Add label strip for this zone
-          await addLabel(zone.toUpperCase(), currentY, docW);
+          // Add label — use label from job JSON if provided, else zone name
+          const labelText = (data.label || zone.toUpperCase()).toUpperCase();
+          await addLabel(labelText, currentY, docW);
           currentY += LABEL_PX;
 
           // Place image + text for this zone

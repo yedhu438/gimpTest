@@ -3,6 +3,7 @@ from datetime import date
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
 from font_map import get_font_info
+from sku_parser import build_zone_label
 from pathlib import Path
 
 JOBS_DIR   = Path(r"C:\Varsany\jobs")
@@ -10,27 +11,30 @@ IMAGES_DIR = Path(r"C:\Varsany\Temp\OrderImages")
 BASE_URL   = "http://www.crssoft.co.uk/CustomOrderImages/"
 OUTPUT_ROOT = Path(os.environ.get("VARSANY_OUTPUT", r"C:\Varsany\Output"))
 
+def should_skip(front_fonts, back_fonts, pocket_fonts):
+    """Skip orders with embroidery or rhinestone fonts — handled manually."""
+    combined = " ".join([
+        (front_fonts  or ""),
+        (back_fonts   or ""),
+        (pocket_fonts or ""),
+    ]).lower()
+    return "emb" in combined or "rhine" in combined
+
 def get_output_path(sku, zone_count, order_id):
-    """Build output path: Output\YYYY-MM-DD\{category}\{colour?}\OrderID.psd"""
     today   = date.today().strftime("%Y-%m-%d")
     sku_low = sku.lower()
-
-    # Level 2 — Category (check in order)
     if zone_count >= 2:
         category = "Automated"
     elif any(k in sku_low for k in ["kidshoo", "kidshood", "gymhoodie"]):
         category = "DTF Kids Hoodie"
     else:
         category = "DTF Front"
-
-    # Level 3 — Colour: only black or white, everything else = no subfolder
     if "blk" in sku_low:
         colour = "black"
     elif "wht" in sku_low:
         colour = "white"
     else:
         colour = None
-
     folder = OUTPUT_ROOT / today / category
     if colour:
         folder = folder / colour
@@ -104,8 +108,13 @@ print(f"Found {len(rows)} orders. Writing jobs...\n")
 
 for row in rows:
     oid, sku = row[0], row[1]
-    zones = {}
 
+    # ── Skip embroidery / rhinestone — handled manually by design team ─────────
+    if should_skip(row[5], row[11], None):
+        print(f"[SKIP] {oid} -- embroidery/rhinestone font, manual order")
+        continue
+
+    zones = {}
     front = make_zone(row[2], row[3], row[4], row[5], row[6], row[7])
     back  = make_zone(row[8], row[9], row[10], row[11], row[12], row[13])
     pi    = get_img(row[14], row[15])
@@ -124,8 +133,14 @@ for row in rows:
     if not zones:
         print(f"[SKIP] {oid}"); continue
 
-    out_path = get_output_path(sku, len(zones), oid)
+    # Determine if multi-size order (same order, different sizes = different designs)
+    # For now: always use simple label (zone name only). 
+    # Set is_multi_size=True if you want colour+size in label.
+    is_multi_size = False
+    for zone_name in list(zones.keys()):
+        zones[zone_name]["label"] = build_zone_label(zone_name, sku, is_multi_size)
 
+    out_path = get_output_path(sku, len(zones), oid)
     job = {
         "order_id":    oid,
         "sku":         sku,
@@ -136,9 +151,8 @@ for row in rows:
         "dpi":         320
     }
     (JOBS_DIR / f"{oid}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
-    # Show routing info
     parts = Path(out_path).parts
-    routing = "\\".join(parts[-3:-1])  # date\category or date\category\colour
+    routing = "\\".join(parts[-3:-1])
     print(f"[JOB] {oid} | {routing} | zones:{list(zones.keys())}")
 
 print("\nAll jobs written.")
