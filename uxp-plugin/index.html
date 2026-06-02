@@ -213,11 +213,11 @@ async function processZone(doc, zone, data, imgEntry, yOffset, docW, docH, res){
           const ppb2 = await getLayerBounds();
           await moveLayerToY(ppb2.top, yOffset);
         }
-        // Rasterize and name it
+        // Rasterize, name and hide preview layer
         await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
         await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Preview_"+zone}}]);
-        // Make invisible
-        app.activeDocument.activeLayer.visible = false;
+        // Hide via batchPlay
+        await bp([{_obj:"hide",null:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]}]);
         log("Preview placed (hidden): "+zone);
       }catch(pe){log("Preview error ("+zone+"): "+pe.message,true);}
     }
