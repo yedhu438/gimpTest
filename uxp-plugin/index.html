@@ -535,8 +535,9 @@ async function createAllTemplates(){
             depth:8,
             profile:"U.S. Web Coated (SWOP) v2"
           }}]);
-          // Always use app.documents[0] — most recently created doc
-          const newDoc = app.documents[0];
+          // Save as PSD then close — use last document in list (newest)
+          const docCount = app.documents.length;
+          const newDoc = app.documents[docCount - 1];
           const f=await tplFolder.createFile(name+"_combined.psd",{overwrite:true});
           const token=fs.createSessionToken(f);
           await bp([{_obj:"save",as:{_obj:"photoshop35Format",maximizeCompatibility:true},in:{_path:token,_kind:"local"}}]);
