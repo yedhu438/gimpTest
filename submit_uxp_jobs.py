@@ -149,7 +149,7 @@ for row in rows:
         print(f"[SKIP] {oid} -- no zones"); skipped += 1; continue
 
     # Add label to each zone
-    is_multi_size = False
+    is_multi_size = True
     for zone_name in list(zones.keys()):
         zones[zone_name]["label"] = build_zone_label(zone_name, sku, is_multi_size)
 
