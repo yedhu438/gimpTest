@@ -216,8 +216,9 @@ async function processZone(doc, zone, data, imgEntry, yOffset, docW, docH, res){
         // Rasterize, name and hide preview layer
         await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
         await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Preview_"+zone}}]);
-        // Hide via batchPlay
-        await bp([{_obj:"hide",null:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]}]);
+        // Hide by setting opacity to 0 visibility via batchPlay
+        await bp([{_obj:"set",null:{_ref:[{_ref:"layer",_name:"Preview_"+zone}]},
+          to:{_obj:"layer",visible:false}}]);
         log("Preview placed (hidden): "+zone);
       }catch(pe){log("Preview error ("+zone+"): "+pe.message,true);}
     }
