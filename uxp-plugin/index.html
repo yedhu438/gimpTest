@@ -170,9 +170,10 @@ async function processZone(doc, zone, data, imgEntry, yOffset, docW, docH, res){
     const pb = await getLayerBounds();
     const lw = pb.w, lh = pb.h;
 
-    // Scale to fit zone width x zone height
+    // Scale to fit zone with 0.3cm margin on each side (38px at 320dpi)
+    const MARGIN_PX = 38; // 0.3cm at 320dpi
     if(lw>0 && lh>0){
-      const scalePct = Math.min(docW/lw, zoneH/lh)*100;
+      const scalePct = Math.min((docW - MARGIN_PX*2)/lw, zoneH/lh)*100;
       await bp([{_obj:"transform",null:{_ref:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]},
         freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"},
         width:{_unit:"percentUnit",_value:scalePct},height:{_unit:"percentUnit",_value:scalePct},
@@ -326,7 +327,7 @@ async function processJob(jobEntry){
               const pb=await getLayerBounds();
               const lw=pb.w,lh=pb.h;
               if(lw>0&&lh>0){
-                const scalePct=Math.min(docW/lw,docH/lh)*100;
+                const scalePct=Math.min((docW-76)/lw,docH/lh)*100; // 76px = 0.6cm total margin
                 await bp([{_obj:"transform",null:{_ref:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]},
                   freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"},
                   width:{_unit:"percentUnit",_value:scalePct},height:{_unit:"percentUnit",_value:scalePct},
