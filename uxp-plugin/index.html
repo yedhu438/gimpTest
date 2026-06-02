@@ -15,6 +15,7 @@
 <div id="status"><span class="dot"></span>Starting...</div>
 <button id="pickBtn"        style="background:#5a3a6a">📁 Set C:\Varsany Root</button>
 <button id="mkCombinedBtn"  style="background:#2a6a3a">🔨 Create Combined Template</button>
+<button id="mkAllTplBtn"    style="background:#6a3a2a">📦 Create All Product Templates</button>
 <button id="buildBtn"       style="background:#3a6ea5">Build Zone Templates</button>
 <div id="log"></div>
 <script>
@@ -484,10 +485,73 @@ async function createCombinedTemplate(){
   finally{processing=false;}
 }
 
+// ── Create all product templates ──────────────────────────────────────────────
+async function createAllTemplates(){
+  if(!VARSANY_ROOT){log("Pick C:\\Varsany root first",true);return;}
+  if(processing){log("Busy — wait for current job to finish",true);return;}
+  processing=true;
+  const DPI=320, PX=cm=>Math.round(cm*DPI/2.54);
+  const PRODUCTS = [
+    // product_zone, w_cm, h_cm
+    ["adulttshirt_front",  30,30], ["adulttshirt_back",   30,30], ["adulttshirt_pocket", 9,9],
+    ["kidstshirt_front",   23,30], ["kidstshirt_back",    23,30], ["kidstshirt_pocket",  9,9],
+    ["adulthoodie_front",  25,25], ["adulthoodie_back",   25,25], ["adulthoodie_pocket", 9,9], ["adulthoodie_sleeve",9,7],
+    ["kidshoodie_front",   23,20], ["kidshoodie_back",    23,20], ["kidshoodie_pocket",  9,9],
+    ["totebag_front",      28,28], ["totebag_back",       28,28],
+    ["backpack_front",     18,12],
+    ["makeupbag_front",    23,14],
+    ["shoebag_front",      23,14],
+    ["shoebag2_front",     14,14],
+    ["stringbag_front",    22,24],
+    ["knittingbag_front",  25,21],
+    ["buckethat_front",    18, 5],
+    ["beanie_front",      9.5,4.5],
+    ["socks_front",         6,12],
+    ["seatbelt_front",     18, 4],
+    ["babyvest_front",     15,17],
+    ["sleepsuit_front",    13,18],
+    ["hodieblanket_front", 17, 5],
+    ["cushion_front",      30,30],
+    ["memorialplaque_front",13,8],
+    ["golftowel_front",    17,17],
+    ["golfcase_front",     15, 6],
+    ["slipper_front",       6, 6],
+  ];
+  try{
+    const tplFolder = await getOrCreate(VARSANY_ROOT,"template");
+    log("Creating "+PRODUCTS.length+" templates...");
+    await core.executeAsModal(async()=>{
+      for(const [name,wcm,hcm] of PRODUCTS){
+        try{
+          await bp([{_obj:"make",new:{_obj:"document",artboard:false,autoPromoteBackgroundLayer:false,
+            preset:"Custom",
+            width:{_unit:"pixelsUnit",_value:PX(wcm)},
+            height:{_unit:"pixelsUnit",_value:PX(hcm)},
+            resolution:{_unit:"densityUnit",_value:DPI},
+            pixelScaleFactor:1,
+            mode:{_class:"CMYKColorMode"},
+            fill:{_enum:"fill",_value:"transparent"},
+            depth:8,
+            profile:"U.S. Web Coated (SWOP) v2"
+          }}]);
+          const f=await tplFolder.createFile(name+".psd",{overwrite:true});
+          const token=fs.createSessionToken(f);
+          await bp([{_obj:"save",as:{_obj:"photoshop35Format",maximizeCompatibility:true},in:{_path:token,_kind:"local"}}]);
+          await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);
+          log("Created: "+name+".psd ("+PX(wcm)+"x"+PX(hcm)+"px)");
+        }catch(e){log("Error: "+name+" — "+e.message,true);try{await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}}
+      }
+    },{commandName:"Create all product templates"});
+    log("All templates created in C:\\Varsany\\template\\");
+  }catch(e){log("Error: "+e.message,true);}
+  finally{processing=false;}
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 initFolders().finally(()=>{
   document.getElementById("pickBtn").addEventListener("click", pickRoot);
   document.getElementById("mkCombinedBtn").addEventListener("click", createCombinedTemplate);
+  document.getElementById("mkAllTplBtn").addEventListener("click", createAllTemplates);
   document.getElementById("buildBtn").addEventListener("click", ()=>log("Use Build Templates from settings",true));
   setInterval(pollJobs, POLL_MS);
   log("Polling every "+(POLL_MS/1000)+"s ["+PLUGIN_VERSION+"]");
