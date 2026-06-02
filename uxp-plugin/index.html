@@ -213,12 +213,12 @@ async function processZone(doc, zone, data, imgEntry, yOffset, docW, docH, res){
           const ppb2 = await getLayerBounds();
           await moveLayerToY(ppb2.top, yOffset);
         }
-        // Rasterize, name and hide preview layer
+        // Rasterize and name preview layer
         await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
         await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Preview_"+zone}}]);
-        // Hide by setting opacity to 0 visibility via batchPlay
-        await bp([{_obj:"set",null:{_ref:[{_ref:"layer",_name:"Preview_"+zone}]},
-          to:{_obj:"layer",visible:false}}]);
+        // Hide via DOM — same approach as font fix (batchPlay visible:false ignored in PS2026)
+        const previewLayer = doc.layers.find(l => l.name === "Preview_"+zone);
+        if(previewLayer) previewLayer.visible = false;
         log("Preview placed (hidden): "+zone);
       }catch(pe){log("Preview error ("+zone+"): "+pe.message,true);}
     }
