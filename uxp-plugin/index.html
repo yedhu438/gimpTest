@@ -22,7 +22,7 @@ const {app,core,action,constants} = require("photoshop");
 const uxp = require("uxp");
 const fs  = uxp.storage.localFileSystem;
 
-const PLUGIN_VERSION = "v3.1-domcrop";
+const PLUGIN_VERSION = "v3.2-preview";
 const POLL_MS   = 3000;
 const LABEL_PX  = 252;  // 2cm at 320dpi
 const GAP_PX    = 126;  // 1cm gap between zones
@@ -193,6 +193,34 @@ async function processZone(doc, zone, data, imgEntry, yOffset, docW, docH, res){
     await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
     await doc.layers[0].move(doc.layers[doc.layers.length-1],"placeBefore");
     log("Placed image: "+zone);
+
+    // Place preview image as invisible layer above customer image
+    if(data.preview_image){
+      try{
+        const previewEntry = await getImageEntry(data.preview_image);
+        const previewToken = fs.createSessionToken(previewEntry);
+        await bp([{_obj:"placeEvent",null:{_path:previewToken,_kind:"local"},freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}}]);
+        // Scale preview to same size as zone
+        const ppb = await getLayerBounds();
+        if(ppb.w>0&&ppb.h>0){
+          const pscale = Math.min((docW-MARGIN_PX*2)/ppb.w, zoneH/ppb.h)*100;
+          await bp([{_obj:"transform",null:{_ref:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]},
+            freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"},
+            width:{_unit:"percentUnit",_value:pscale},height:{_unit:"percentUnit",_value:pscale},
+            constrainProportions:true,interfaceIconFrameDimmed:{_enum:"interpolationType",_value:"bicubicAutomatic"}}]);
+          await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
+            using:{_enum:"alignDistributeSelector",_value:"ADSCentersH"},alignToCanvas:true}]);
+          const ppb2 = await getLayerBounds();
+          await moveLayerToY(ppb2.top, yOffset);
+        }
+        // Rasterize and name it
+        await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
+        await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Preview_"+zone}}]);
+        // Make invisible
+        app.activeDocument.activeLayer.visible = false;
+        log("Preview placed (hidden): "+zone);
+      }catch(pe){log("Preview error ("+zone+"): "+pe.message,true);}
+    }
   }
 
     // Set text if available

@@ -52,17 +52,18 @@ def ensure_image(fname):
             urllib.request.urlretrieve(BASE_URL + fname, dest)
             print(f"  Downloaded: {fname}")
         except Exception as e:
-            print(f"  FAILED to get image {fname}: {e}")
+            print(f"  FAILED: {fname} — {e}")
             return None
     return fname
 
-def make_zone(img_json, img_field, text_raw, fonts_json, colours_json):
-    fi   = get_img(img_json, img_field)
-    ft   = (text_raw or "").strip()
-    if not fi and not ft: return None, None
+def make_zone(img_json, img_field, text_raw, fonts_json, colours_json, preview_img=None):
+    fi = get_img(img_json, img_field)
+    ft = (text_raw or "").strip()
+    if not fi and not ft: return None
     ps, fam, sty = get_font_info(fonts_json)
-    return ensure_image(fi), {
+    return {
         "customer_image": ensure_image(fi),
+        "preview_image":  ensure_image((preview_img or "").strip() or None),
         "text_lines":     [l.strip() for l in ft.split("\n") if l.strip()] if ft else [],
         "font_ps_name":   ps,
         "font_family":    fam,
@@ -76,10 +77,10 @@ IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 conn = get_connection()
 cur  = conn.cursor()
 cur.execute("""
-    SELECT o.OrderID, o.SKU,
-        d.FrontImageJSON, d.FrontImage, d.FrontText,  d.FrontFonts, d.FrontColours,
-        d.BackImageJSON,  d.BackImage,  d.BackText,   d.BackFonts,  d.BackColours,
-        d.PocketImageJSON,d.PocketImage
+    SELECT TOP 10 o.OrderID, o.SKU,
+        d.FrontImageJSON, d.FrontImage, d.FrontText,  d.FrontFonts,  d.FrontColours,  d.FrontPreviewImage,
+        d.BackImageJSON,  d.BackImage,  d.BackText,   d.BackFonts,   d.BackColours,   d.BackPreviewImage,
+        d.PocketImageJSON,d.PocketImage,d.PocketPreviewImage
     FROM tblCustomOrder o
     JOIN tblCustomOrderDetails d ON o.idCustomOrder = d.idCustomOrder
     WHERE (d.FrontImage IS NOT NULL AND LTRIM(RTRIM(d.FrontImage)) != '')
@@ -94,26 +95,26 @@ print(f"Found {len(rows)} orders. Writing jobs...\n")
 for row in rows:
     oid, sku = row[0], row[1]
     product  = detect_product(sku)
-    canvas   = CANVAS.get(product, CANVAS["default"])
     zones    = {}
 
-    _, front_data  = make_zone(row[2],  row[3],  row[4],  row[5],  row[6])
-    _, back_data   = make_zone(row[7],  row[8],  row[9],  row[10], row[11])
-    pocket_img     = get_img(row[12], row[13])
+    front = make_zone(row[2], row[3], row[4], row[5], row[6], row[7])
+    back  = make_zone(row[8], row[9], row[10], row[11], row[12], row[13])
+    pi    = get_img(row[14], row[15])
+    pp    = (row[16] or "").strip() or None
 
-    if front_data:  zones["front"]  = front_data
-    if back_data:   zones["back"]   = back_data
-    if pocket_img:
+    if front: zones["front"] = front
+    if back:  zones["back"]  = back
+    if pi:
         zones["pocket"] = {
-            "customer_image": ensure_image(pocket_img),
+            "customer_image": ensure_image(pi),
+            "preview_image":  ensure_image(pp),
             "text_lines": [], "font_ps_name": "Arial-BoldMT",
             "font_family": "Arial", "font_style": "Bold", "colour_hex": "#ffffff"
         }
 
     if not zones:
-        print(f"[SKIP] {oid} — no zones"); continue
+        print(f"[SKIP] {oid}"); continue
 
-    # Write ONE combined job per order with all zones
     job = {
         "order_id":    oid,
         "combined":    True,
@@ -123,7 +124,7 @@ for row in rows:
         "dpi":         320
     }
     (JOBS_DIR / f"{oid}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
-    zone_summary = " + ".join(f"{z}({d['font_family']},{d['colour_hex']})" for z,d in zones.items())
-    print(f"[JOB] {oid} — {zone_summary}")
+    fonts_used = list(set(d['font_family'] for d in zones.values()))
+    print(f"[JOB] {oid} | zones:{list(zones.keys())} | fonts:{fonts_used}")
 
 print("\nAll jobs written.")
