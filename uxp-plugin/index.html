@@ -537,9 +537,13 @@ async function createAllTemplates(){
           const f=await tplFolder.createFile(name+".psd",{overwrite:true});
           const token=fs.createSessionToken(f);
           await bp([{_obj:"save",as:{_obj:"photoshop35Format",maximizeCompatibility:true},in:{_path:token,_kind:"local"}}]);
-          await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);
+          const d = app.activeDocument;
+          if(d) await d.close(constants.SaveOptions.DONOTSAVECHANGES);
           log("Created: "+name+".psd ("+PX(wcm)+"x"+PX(hcm)+"px)");
-        }catch(e){log("Error: "+name+" — "+e.message,true);try{await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}}
+        }catch(e){
+          log("Error: "+name+" — "+e.message,true);
+          if(app.documents.length>0) try{await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}
+        }
       }
     },{commandName:"Create all product templates"});
     log("All templates created in C:\\Varsany\\template\\");
