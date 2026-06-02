@@ -2,6 +2,7 @@ import sys, json, urllib.request
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
 from font_map import get_font_info
+from product_canvas import PRODUCT_CANVAS, SKU_MAP
 from pathlib import Path
 
 JOBS_DIR   = Path(r"C:\Varsany\jobs")

@@ -452,13 +452,66 @@ async function processJob(jobEntry){
   }
 }
 
+// ── Build all product templates from BUILD_TEMPLATES.json ────────────────────
+async function buildAllTemplates(jobEntry){
+  let job;
+  try{ job = await readJSON(jobEntry); } catch(e){ await jobEntry.delete(); return; }
+  const products = job.products || {};
+  log("Building "+Object.keys(products).length+" product templates...");
+  let done = 0, failed = 0;
+
+  await core.executeAsModal(async()=>{
+    for(const [product, dims] of Object.entries(products)){
+      const fname = product+".psd";
+      try{
+        // Create blank CMYK transparent tall canvas
+        await bp([{_obj:"make",new:{_obj:"document",artboard:false,autoPromoteBackgroundLayer:false,
+          preset:"Custom",
+          width:{_unit:"pixelsUnit",_value:dims.width_px},
+          height:{_unit:"pixelsUnit",_value:dims.height_px},
+          resolution:{_unit:"densityUnit",_value:320},
+          pixelScaleFactor:1,mode:{_class:"CMYKColorMode"},
+          fill:{_enum:"fill",_value:"transparent"},depth:8,
+          profile:"U.S. Web Coated (SWOP) v2"
+        }}]);
+
+        // Save to template folder
+        const tplFolder = await getOrCreate(VARSANY_ROOT,"template");
+        const f = await tplFolder.createFile(fname,{overwrite:true});
+        const token = fs.createSessionToken(f);
+        await bp([{_obj:"save",as:{_obj:"photoshop35Format",maximizeCompatibility:true,embedProfiles:true},
+          in:{_path:token,_kind:"local"}}]);
+        await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);
+        done++;
+        log("Template: "+fname+" ("+dims.width_px+"x"+dims.height_px+"px)");
+      }catch(e){
+        failed++;
+        log("FAILED: "+fname+" — "+e.message, true);
+        try{ await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES); }catch(x){}
+      }
+    }
+  },{commandName:"Build all templates"});
+
+  await jobEntry.delete();
+  log("Templates done: "+done+" built, "+failed+" failed.");
+}
+
 async function pollJobs(){
   if(processing||!JOBS_FOLDER)return;
   processing=true;
   try{
     const entries=await JOBS_FOLDER.getEntries();
     const jobs=entries.filter(e=>e.name.endsWith(".json")).sort((a,b)=>a.name<b.name?-1:1);
-    if(jobs.length>0){log("Found "+jobs.length+" job(s)");await processJob(jobs[0]);}
+    if(jobs.length>0){
+      log("Found "+jobs.length+" job(s)");
+      // Check if it's a build-templates job
+      const first = jobs[0];
+      if(first.name === "BUILD_TEMPLATES.json"){
+        await buildAllTemplates(first);
+      } else {
+        await processJob(first);
+      }
+    }
   }catch(e){log("Poll error: "+e.message,true);}
   processing=false;
 }
