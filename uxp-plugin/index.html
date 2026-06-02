@@ -491,42 +491,43 @@ async function createAllTemplates(){
   if(processing){log("Busy — wait for current job to finish",true);return;}
   processing=true;
   const DPI=320, PX=cm=>Math.round(cm*DPI/2.54);
+  // One combined template per product — width = widest zone, height = 15000px (cropped at runtime)
   const PRODUCTS = [
-    // product_zone, w_cm, h_cm
-    ["adulttshirt_front",  30,30], ["adulttshirt_back",   30,30], ["adulttshirt_pocket", 9,9],
-    ["kidstshirt_front",   23,30], ["kidstshirt_back",    23,30], ["kidstshirt_pocket",  9,9],
-    ["adulthoodie_front",  25,25], ["adulthoodie_back",   25,25], ["adulthoodie_pocket", 9,9], ["adulthoodie_sleeve",9,7],
-    ["kidshoodie_front",   23,20], ["kidshoodie_back",    23,20], ["kidshoodie_pocket",  9,9],
-    ["totebag_front",      28,28], ["totebag_back",       28,28],
-    ["backpack_front",     18,12],
-    ["makeupbag_front",    23,14],
-    ["shoebag_front",      23,14],
-    ["shoebag2_front",     14,14],
-    ["stringbag_front",    22,24],
-    ["knittingbag_front",  25,21],
-    ["buckethat_front",    18, 5],
-    ["beanie_front",      9.5,4.5],
-    ["socks_front",         6,12],
-    ["seatbelt_front",     18, 4],
-    ["babyvest_front",     15,17],
-    ["sleepsuit_front",    13,18],
-    ["hodieblanket_front", 17, 5],
-    ["cushion_front",      30,30],
-    ["memorialplaque_front",13,8],
-    ["golftowel_front",    17,17],
-    ["golfcase_front",     15, 6],
-    ["slipper_front",       6, 6],
+    ["adulttshirt",   30],  // width cm
+    ["kidstshirt",    23],
+    ["adulthoodie",   25],
+    ["kidshoodie",    23],
+    ["totebag",       28],
+    ["backpack",      18],
+    ["makeupbag",     23],
+    ["shoebag",       23],
+    ["shoebag2",      14],
+    ["stringbag",     22],
+    ["knittingbag",   25],
+    ["buckethat",     18],
+    ["beanie",        9.5],
+    ["socks",          6],
+    ["seatbelt",      18],
+    ["babyvest",      15],
+    ["sleepsuit",     13],
+    ["hodieblanket",  17],
+    ["cushion",       30],
+    ["memorialplaque",13],
+    ["golftowel",     17],
+    ["golfcase",      15],
+    ["slipper",        6],
   ];
   try{
     const tplFolder = await getOrCreate(VARSANY_ROOT,"template");
     log("Creating "+PRODUCTS.length+" templates...");
     await core.executeAsModal(async()=>{
-      for(const [name,wcm,hcm] of PRODUCTS){
+      for(const [name,wcm] of PRODUCTS){
         try{
+          const wpx = PX(wcm);
           await bp([{_obj:"make",new:{_obj:"document",artboard:false,autoPromoteBackgroundLayer:false,
             preset:"Custom",
-            width:{_unit:"pixelsUnit",_value:PX(wcm)},
-            height:{_unit:"pixelsUnit",_value:PX(hcm)},
+            width:{_unit:"pixelsUnit",_value:wpx},
+            height:{_unit:"pixelsUnit",_value:15000},
             resolution:{_unit:"densityUnit",_value:DPI},
             pixelScaleFactor:1,
             mode:{_class:"CMYKColorMode"},
@@ -534,12 +535,12 @@ async function createAllTemplates(){
             depth:8,
             profile:"U.S. Web Coated (SWOP) v2"
           }}]);
-          const f=await tplFolder.createFile(name+".psd",{overwrite:true});
+          const f=await tplFolder.createFile(name+"_combined.psd",{overwrite:true});
           const token=fs.createSessionToken(f);
           await bp([{_obj:"save",as:{_obj:"photoshop35Format",maximizeCompatibility:true},in:{_path:token,_kind:"local"}}]);
           const d = app.activeDocument;
           if(d) await d.close(constants.SaveOptions.DONOTSAVECHANGES);
-          log("Created: "+name+".psd ("+PX(wcm)+"x"+PX(hcm)+"px)");
+          log("Created: "+name+"_combined.psd ("+wpx+"x15000px)");
         }catch(e){
           log("Error: "+name+" — "+e.message,true);
           if(app.documents.length>0) try{await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}
