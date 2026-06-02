@@ -525,6 +525,9 @@ async function createAllTemplates(){
       for(const [name,wcm] of PRODUCTS){
         try{
           const wpx = PX(wcm);
+          // Create file entry FIRST before making the document
+          const f = await tplFolder.createFile(name+"_combined.psd",{overwrite:true});
+          const token = fs.createSessionToken(f);
           await bp([{_obj:"make",new:{_obj:"document",artboard:false,autoPromoteBackgroundLayer:false,
             preset:"Custom",
             width:{_unit:"pixelsUnit",_value:wpx},
@@ -536,8 +539,6 @@ async function createAllTemplates(){
             depth:8,
             profile:"U.S. Web Coated (SWOP) v2"
           }}]);
-          const f=await tplFolder.createFile(name+"_combined.psd",{overwrite:true});
-          const token=fs.createSessionToken(f);
           await bp([{_obj:"save",as:{_obj:"photoshop35Format",maximizeCompatibility:true},in:{_path:token,_kind:"local"}}]);
           openDocs.push(app.activeDocument);
           log("Saved: "+name+"_combined.psd ("+wpx+"x15000px)");
