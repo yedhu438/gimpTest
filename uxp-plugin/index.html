@@ -478,8 +478,8 @@ async function buildAllTemplates(jobEntry){
         const tplFolder = await getOrCreate(VARSANY_ROOT,"template");
         const f = await tplFolder.createFile(fname,{overwrite:true});
         const token = fs.createSessionToken(f);
-        await bp([{_obj:"save",as:{_obj:"photoshop35Format",maximizeCompatibility:true,embedProfiles:true},
-          in:{_path:token,_kind:"local"}}]);
+        // Use saveAs DOM API — same as createCombinedTemplate which works
+        await newDoc.saveAs.psd(f, {embedColorProfile:true}, true);
         await newDoc.close(constants.SaveOptions.DONOTSAVECHANGES);
         newDoc=null; done++;
         log("Template: "+fname+" ("+dims.width_px+"x"+dims.height_px+"px)");
