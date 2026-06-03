@@ -214,9 +214,8 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
         // Rasterize and name preview layer
         await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
         await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Preview_"+zone}}]);
-        // Hide via DOM — same approach as font fix (batchPlay visible:false ignored in PS2026)
-        const previewLayer = doc.layers.find(l => l.name === "Preview_"+zone);
-        if(previewLayer) previewLayer.visible = false;
+        // Hide via activeLayer DOM — must use activeLayer not find() as layer ref may not refresh
+        doc.activeLayer.visible = false;
         log("Preview placed (hidden): "+zone);
       }catch(pe){log("Preview error ("+zone+"): "+pe.message,true);}
     }
