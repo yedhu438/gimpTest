@@ -192,16 +192,18 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
     await doc.layers[0].move(doc.layers[doc.layers.length-1],"placeBefore");
     log("Placed image: "+zone);
 
-    // Place preview image as invisible layer above customer image
+    // Place preview image as invisible rasterized layer
     if(data.preview_image){
       try{
         const previewEntry = await getImageEntry(data.preview_image);
         const previewToken = fs.createSessionToken(previewEntry);
         await bp([{_obj:"placeEvent",null:{_path:previewToken,_kind:"local"},freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}}]);
-        // Scale preview to same size as zone
+        // Rasterize FIRST — before any transform to avoid Smart Object issues
+        await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
+        // Scale to fit zone — use zoneW not docW
         const ppb = await getLayerBounds();
         if(ppb.w>0&&ppb.h>0){
-          const pscale = Math.min((docW-MARGIN_PX*2)/ppb.w, zoneH/ppb.h)*100;
+          const pscale = Math.min((zoneW-MARGIN_PX*2)/ppb.w, zoneH/ppb.h)*100;
           await bp([{_obj:"transform",null:{_ref:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]},
             freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"},
             width:{_unit:"percentUnit",_value:pscale},height:{_unit:"percentUnit",_value:pscale},
@@ -211,10 +213,9 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
           const ppb2 = await getLayerBounds();
           await moveLayerToY(ppb2.top, yOffset);
         }
-        // Rasterize and name preview layer
-        await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
+        // Name it
         await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Preview_"+zone}}]);
-        // Hide via activeLayer DOM — must use activeLayer not find() as layer ref may not refresh
+        // Hide via activeLayer DOM
         doc.activeLayer.visible = false;
         log("Preview placed (hidden): "+zone);
       }catch(pe){log("Preview error ("+zone+"): "+pe.message,true);}
