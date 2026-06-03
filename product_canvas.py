@@ -36,6 +36,22 @@ PRODUCT_CANVAS = {
     "slipper":        {"front": (cm(6),  cm(6))},
 }
 
+
+# ── SKU prefix → product key ──────────────────────────────────────────────────
+SKU_MAP = [
+    ("AnyTxtAdultHood_","adulthoodie"),("AnyTxtKidsHood_","kidshoodie"),
+    ("AnyTxtBabyVest_","babyvest"),    ("BabyVest","babyvest"),
+    ("AnyTxtTote_","totebag"),         ("AnyTxtBckpck_","backpack"),
+    ("AnyTextHat_","buckethat"),       ("AnytxtBeanie_","beanie"),
+    ("AnyTxtSocksAnkl_","socks"),      ("AnyTxtSocks","socks"),
+    ("AnyTxtMakUp_","makeupbag"),      ("AnyTxtSlip","slipper"),
+    ("PCushion","cushion"),            ("KidsTee_","kidstshirt"),
+    ("MenHood_","adulthoodie"),        ("KidsHood_","kidshoodie"),
+    ("AnyTxtOverSizeTee_","adulttshirt"),
+    ("MenTee_","adulttshirt"),         ("WmnTee_","adulttshirt"),
+    ("COMenTee_","adulttshirt"),       ("AnyTxt","adulttshirt"),
+]
+
 if __name__ == "__main__":
     print(f"{'Product':<20} {'Zone':<10} {'Width px':>10} {'Height px':>10} {'Width cm':>10} {'Height cm':>10}")
     print("="*75)
