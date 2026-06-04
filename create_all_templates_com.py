@@ -23,7 +23,7 @@ for product, zones in PRODUCT_CANVAS.items():
         continue
 
     max_w  = max(w for w, h in zones.values())
-    height = 15000
+    height = 60000  # 60000px to handle up to ~15 items stacked
     fname  = os.path.join(TEMPLATE_DIR, product + ".psd")
 
     try:
