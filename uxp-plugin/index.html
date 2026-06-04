@@ -16,6 +16,7 @@
 <button id="pickBtn"        style="background:#5a3a6a">📁 Set C:\Varsany Root</button>
 <button id="mkCombinedBtn"  style="background:#2a6a3a">🔨 Create Combined Template</button>
 <button id="mkAllTplBtn"    style="background:#6a3a2a">📦 Create All Product Templates</button>
+<button id="resizeTplBtn"   style="background:#6a4a1a">📐 Resize Templates to 60000px</button>
 <button id="buildBtn"       style="background:#3a6ea5">Build Zone Templates</button>
 <div id="log"></div>
 <script>
@@ -640,11 +641,53 @@ async function createAllTemplates(){
   finally{processing=false;}
 }
 
+// ── Resize all templates to 60000px tall ─────────────────────────────────────
+async function resizeAllTemplates(){
+  if(!VARSANY_ROOT){log("Pick C:\\Varsany root first",true);return;}
+  if(processing){log("Busy",true);return;}
+  processing=true;
+  const TARGET_H = 60000;
+  try{
+    const tplFolder = await getOrCreate(VARSANY_ROOT,"template");
+    const entries   = await tplFolder.getEntries();
+    const psds      = entries.filter(e=>e.name.endsWith(".psd")&&!e.name.includes("combined"));
+    log("Resizing "+psds.length+" templates to "+TARGET_H+"px...");
+    let done=0, skipped=0;
+    await core.executeAsModal(async()=>{
+      for(const entry of psds){
+        try{
+          const token = fs.createSessionToken(entry);
+          await bp([{_obj:"open",null:{_path:token,_kind:"local"},_options:{dialogOptions:"dontDisplay"}}]);
+          const doc = app.activeDocument;
+          const {w:curW, h:curH} = await getDocSize();
+          if(curH >= TARGET_H){
+            await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
+            skipped++; log("Skip: "+entry.name+" (already "+curH+"px)"); continue;
+          }
+          // Resize canvas to TARGET_H
+          await app.activeDocument.resizeCanvas(curW, TARGET_H, constants.AnchorPosition.TOPLEFT);
+          // Save using saveAs.psd DOM API
+          await doc.saveAs.psd(entry, {embedColorProfile:true}, true);
+          await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
+          done++;
+          log("Resized: "+entry.name+" ("+curW+"x"+TARGET_H+"px)");
+        }catch(e){
+          log("Error: "+entry.name+" — "+e.message, true);
+          try{await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}
+        }
+      }
+    },{commandName:"Resize templates"});
+    log("Done: "+done+" resized, "+skipped+" skipped.");
+  }catch(e){log("Error: "+e.message,true);}
+  finally{processing=false;}
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 initFolders().finally(()=>{
   document.getElementById("pickBtn").addEventListener("click", pickRoot);
   document.getElementById("mkCombinedBtn").addEventListener("click", createCombinedTemplate);
   document.getElementById("mkAllTplBtn").addEventListener("click", createAllTemplates);
+  document.getElementById("resizeTplBtn").addEventListener("click", resizeAllTemplates);
   document.getElementById("buildBtn").addEventListener("click", ()=>log("Use Build Templates from settings",true));
   setInterval(pollJobs, POLL_MS);
   log("Polling every "+(POLL_MS/1000)+"s ["+PLUGIN_VERSION+"]");
