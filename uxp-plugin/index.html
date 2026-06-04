@@ -156,7 +156,7 @@ async function addLabel(labelText, yTop, canvasW){
 
 // ── Process one zone: place image + text at given Y offset ────────────────────
 // Returns the bottom Y of the zone content
-async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res){
+async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res, alignLeft=false){
   let zoneBottom = yOffset;
 
   // Place image if available
@@ -164,11 +164,9 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
     const imgToken = fs.createSessionToken(imgEntry);
     await bp([{_obj:"placeEvent",null:{_path:imgToken,_kind:"local"},freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"}}]);
 
-    // Get placed bounds
     const pb = await getLayerBounds();
     const lw = pb.w, lh = pb.h;
 
-    // Scale to fit zone with 0.3cm margin on each side (38px at 320dpi)
     const MARGIN_PX = 38;
     if(lw>0 && lh>0){
       const scalePct = Math.min((zoneW - MARGIN_PX*2)/lw, zoneH/lh)*100;
@@ -177,17 +175,20 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
         width:{_unit:"percentUnit",_value:scalePct},height:{_unit:"percentUnit",_value:scalePct},
         constrainProportions:true,interfaceIconFrameDimmed:{_enum:"interpolationType",_value:"bicubicAutomatic"}}]);
 
-      // Centre horizontally
-      await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
-        using:{_enum:"alignDistributeSelector",_value:"ADSCentersH"},alignToCanvas:true}]);
+      // Pocket = left-aligned, others = centre
+      if(alignLeft){
+        await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
+          using:{_enum:"alignDistributeSelector",_value:"ADSLefts"},alignToCanvas:true}]);
+      } else {
+        await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
+          using:{_enum:"alignDistributeSelector",_value:"ADSCentersH"},alignToCanvas:true}]);
+      }
 
-      // Move to correct Y
       const pb2 = await getLayerBounds();
       await moveLayerToY(pb2.top, yOffset);
       zoneBottom = yOffset + pb2.h;
     }
 
-    // Rasterize
     await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
     await doc.layers[0].move(doc.layers[doc.layers.length-1],"placeBefore");
     log("Placed image: "+zone);
@@ -270,9 +271,14 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
       }]);
     }
 
-    // Centre H
-    await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
-      using:{_enum:"alignDistributeSelector",_value:"ADSCentersH"},alignToCanvas:true}]);
+    // Pocket = left-aligned text, others = centre
+    if(alignLeft){
+      await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
+        using:{_enum:"alignDistributeSelector",_value:"ADSLefts"},alignToCanvas:true}]);
+    } else {
+      await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
+        using:{_enum:"alignDistributeSelector",_value:"ADSCentersH"},alignToCanvas:true}]);
+    }
 
     // Position: directly below image with small margin, or just 1cm below yOffset if no image
     const textBounds = await getLayerBounds();
@@ -329,18 +335,25 @@ async function processJob(jobEntry){
       if(isCombined){
         // ── COMBINED MODE: stack zones vertically ─────────────────────────────
         let currentY = 0;
-        const zones = Object.entries(job.zones);
+        // Zone order: pocket first, then front, then back, then any others
+        const ZONE_ORDER = ["pocket","front","back","sleeve"];
+        const allZones   = Object.entries(job.zones);
+        const zones      = [
+          ...ZONE_ORDER.filter(z => job.zones[z]).map(z => [z, job.zones[z]]),
+          ...allZones.filter(([z]) => !ZONE_ORDER.includes(z))
+        ];
 
         for(const [zone, data] of zones){
-          // Add label — use label from job JSON if provided, else zone name
+          const isPocket = zone === "pocket";
+          // Add label
           const labelText = (data.label || zone.toUpperCase()).toUpperCase();
           await addLabel(labelText, currentY, docW);
           currentY += LABEL_PX;
 
           // Place image + text for this zone
           const zoneW = data.zone_w_px || docW;
-          const zoneH = data.zone_h_px || docW; // default square if not specified
-          const zoneBottom = await processZone(doc, zone, data, imgEntries[zone], currentY, zoneW, zoneH, res);
+          const zoneH = data.zone_h_px || docW;
+          const zoneBottom = await processZone(doc, zone, data, imgEntries[zone], currentY, zoneW, zoneH, res, isPocket);
           currentY = zoneBottom + GAP_PX;
 
           log("Zone done: "+zone+" bottom at "+zoneBottom);
