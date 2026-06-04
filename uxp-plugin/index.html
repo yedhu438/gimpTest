@@ -190,6 +190,9 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
     }
 
     await bp([{_obj:"rasterizeLayer",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]}}]);
+    // Name the image layer with zone key so multi-item orders don't overwrite each other
+    const imgLayerName = (imgEntry.name||zone).replace(/\.[^.]+$/,"");
+    await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:imgLayerName}}]);
     await doc.layers[0].move(doc.layers[doc.layers.length-1],"placeBefore");
     log("Placed image: "+zone);
 
@@ -214,7 +217,7 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
           const ppb2 = await getLayerBounds();
           await moveLayerToY(ppb2.top, yOffset);
         }
-        // Name it
+        // Name it with zone key so multi-item orders don't overwrite each other
         await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Preview_"+zone}}]);
         // Hide — select by name then set visible false via DOM
         const allLayers = doc.layers;
