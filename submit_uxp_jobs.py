@@ -28,10 +28,11 @@ def get_zone_sizes(product, zone_name):
     w, h = canvas.get(zone_name, canvas.get("front", (3779, 3779)))
     return w, h
 
-def get_output_path(sku, zone_count, order_id):
+def get_output_path(sku, zone_count, order_id, item_count=1):
     today   = date.today().strftime("%Y-%m-%d")
     sku_low = sku.lower()
-    if zone_count >= 2:
+    # Multi-item orders always go to Automated
+    if item_count > 1 or zone_count >= 2:
         category = "Automated"
     elif any(k in sku_low for k in ["kidshoo", "kidshood", "gymhoodie"]):
         category = "DTF Kids Hoodie"
@@ -174,7 +175,7 @@ for order_id, items in orders.items():
     if not (Path(r"C:\Varsany\template") / f"{product}.psd").exists():
         tpl = "C:\\Varsany\\template\\combined_template.psd"
 
-    out_path = get_output_path(first_sku, total_print_zones, order_id)
+    out_path = get_output_path(first_sku, total_print_zones, order_id, len(items))
     job = {
         "order_id":    order_id,
         "sku":         first_sku,
