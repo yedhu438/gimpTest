@@ -88,9 +88,12 @@ async function getEntry(absPath){
 }
 async function getOutputEntry(outputPath){
   try{
-    const parts=outputPath.replace(/\\/g,"/").split("/");
-    const filename=parts.pop();
-    const dir=await getEntry(parts.join("/"));
+    // Build path segment by segment from VARSANY_ROOT, creating folders as needed
+    const rel = outputPath.replace(/\\/g,"/").replace(/^[A-Za-z]:\/Varsany\//,"");
+    const parts = rel.split("/").filter(Boolean);
+    const filename = parts.pop();
+    let dir = VARSANY_ROOT;
+    for(const p of parts) dir = await getOrCreate(dir, p);
     try{return await dir.getEntry(filename);}catch(e){return await dir.createFile(filename,{overwrite:true});}
   }catch(e){
     const outFolder=await getOrCreate(DATA_FOLDER,"output");
