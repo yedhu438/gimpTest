@@ -168,8 +168,8 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
     const pb = await getLayerBounds();
     const lw = pb.w, lh = pb.h;
 
-    // Scale to fit zone — full width, no margin
-    const MARGIN_PX = 0;
+    // Scale to fit zone with 0.3cm margin on each side (38px at 320dpi)
+    const MARGIN_PX = 38;
     if(lw>0 && lh>0){
       const scalePct = Math.min((zoneW - MARGIN_PX*2)/lw, zoneH/lh)*100;
       await bp([{_obj:"transform",null:{_ref:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]},
@@ -203,7 +203,7 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
         // Scale to fit zone — use zoneW not docW
         const ppb = await getLayerBounds();
         if(ppb.w>0&&ppb.h>0){
-          const pscale = Math.min(zoneW/ppb.w, zoneH/ppb.h)*100;
+          const pscale = Math.min((zoneW-MARGIN_PX*2)/ppb.w, zoneH/ppb.h)*100;
           await bp([{_obj:"transform",null:{_ref:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]},
             freeTransformCenterState:{_enum:"quadCenterState",_value:"QCSAverage"},
             width:{_unit:"percentUnit",_value:pscale},height:{_unit:"percentUnit",_value:pscale},
@@ -335,8 +335,6 @@ async function processJob(jobEntry){
           const labelText = (data.label || zone.toUpperCase()).toUpperCase();
           await addLabel(labelText, currentY, docW);
           currentY += LABEL_PX;
-          // 1cm gap between label and image content
-          currentY += GAP_PX;
 
           // Place image + text for this zone
           const zoneW = data.zone_w_px || docW;
