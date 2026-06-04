@@ -215,8 +215,14 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
         }
         // Name it
         await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Preview_"+zone}}]);
-        // Hide via activeLayer DOM
-        doc.activeLayer.visible = false;
+        // Hide — select by name then set visible false via DOM
+        const allLayers = doc.layers;
+        for(let i=0; i<allLayers.length; i++){
+          if(allLayers[i].name === "Preview_"+zone){
+            allLayers[i].visible = false;
+            break;
+          }
+        }
         log("Preview placed (hidden): "+zone);
       }catch(pe){log("Preview error ("+zone+"): "+pe.message,true);}
     }
