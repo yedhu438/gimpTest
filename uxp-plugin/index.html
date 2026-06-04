@@ -464,6 +464,7 @@ async function processJob(jobEntry){
 
       // Save
       const outToken=fs.createSessionToken(outEntry);
+      log("Saving to: "+outEntry.nativePath);
       await bp([{_obj:"save",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"document"}]},in:{_path:outToken,_kind:"local"},as:{_obj:"photoshop35Format",embedProfiles:true}}]);
       log("Saved: "+outEntry.name);
       await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
