@@ -335,16 +335,19 @@ async function processJob(jobEntry){
       if(isCombined){
         // ── COMBINED MODE: stack zones vertically ─────────────────────────────
         let currentY = 0;
-        // Zone order: pocket first, then front, then back, then any others
+        // Zone order: pocket first, then front, then back (by zone key prefix)
         const ZONE_ORDER = ["pocket","front","back","sleeve"];
         const allZones   = Object.entries(job.zones);
-        const zones      = [
-          ...ZONE_ORDER.filter(z => job.zones[z]).map(z => [z, job.zones[z]]),
-          ...allZones.filter(([z]) => !ZONE_ORDER.includes(z))
-        ];
+        const zones      = allZones.sort(([a], [b]) => {
+          // Sort by prefix order, then by suffix index
+          const prefixA = ZONE_ORDER.findIndex(p => a.startsWith(p));
+          const prefixB = ZONE_ORDER.findIndex(p => b.startsWith(p));
+          if(prefixA !== prefixB) return (prefixA<0?99:prefixA) - (prefixB<0?99:prefixB);
+          return a.localeCompare(b);
+        });
 
         for(const [zone, data] of zones){
-          const isPocket = zone === "pocket";
+          const isPocket = zone.startsWith("pocket");
           // Add label
           const labelText = (data.label || zone.toUpperCase()).toUpperCase();
           await addLabel(labelText, currentY, docW);
