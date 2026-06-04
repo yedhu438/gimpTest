@@ -274,14 +274,15 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
     await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
       using:{_enum:"alignDistributeSelector",_value:"ADSCentersH"},alignToCanvas:true}]);
 
-    // Position: below image with margin, or centred in zone if no image
+    // Position: directly below image with small margin, or just 1cm below yOffset if no image
     const textBounds = await getLayerBounds();
-    const margin = Math.round(zoneH * 0.04);
     let textY;
     if(imgEntry){
+      const margin = Math.round(zoneH * 0.04);
       textY = zoneBottom - textBounds.h - margin;
     } else {
-      textY = yOffset + Math.round((zoneH - textBounds.h) / 2);
+      // No image — place text 1cm (126px) below the zone start (just under the label)
+      textY = yOffset + LABEL_PX;
     }
     await moveLayerToY(textBounds.top, textY);
 
