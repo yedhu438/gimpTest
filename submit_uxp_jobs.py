@@ -4,6 +4,8 @@ sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
 from font_map import get_font_info
 from sku_parser import build_zone_label
+from product_canvas import PRODUCT_CANVAS, SKU_MAP
+from bg_remover import remove_background
 from pathlib import Path
 
 JOBS_DIR    = Path(r"C:\Varsany\jobs")
@@ -12,36 +14,30 @@ BASE_URL    = "http://www.crssoft.co.uk/CustomOrderImages/"
 OUTPUT_ROOT = Path(os.environ.get("VARSANY_OUTPUT", r"C:\Varsany\Output"))
 
 def is_manual_order(front_fonts, back_fonts, pocket_fonts=None, sleeve_fonts=None):
-    """Returns True if any font field contains emb or rhine — skip these orders."""
-    combined = " ".join([
-        (front_fonts  or ""),
-        (back_fonts   or ""),
-        (pocket_fonts or ""),
-        (sleeve_fonts or ""),
-    ]).lower()
+    combined = " ".join([(front_fonts or ""), (back_fonts or ""),
+                         (pocket_fonts or ""), (sleeve_fonts or "")]).lower()
     return "emb" in combined or "rhine" in combined
 
+def detect_product(sku):
+    for prefix, product in sorted(SKU_MAP, key=lambda x: -len(x[0])):
+        if sku.startswith(prefix): return product
+    return "adulttshirt"
+
+def get_zone_sizes(product, zone_name):
+    canvas = PRODUCT_CANVAS.get(product, PRODUCT_CANVAS.get("adulttshirt"))
+    w, h = canvas.get(zone_name, canvas.get("front", (3779, 3779)))
+    return w, h
+
 def get_output_path(sku, zone_count, order_id):
-    """Build output path: Output\YYYY-MM-DD\{category}\{colour?}\OrderID.psd"""
     today   = date.today().strftime("%Y-%m-%d")
     sku_low = sku.lower()
-
-    # Level 2 — Category (check in order)
     if zone_count >= 2:
         category = "Automated"
     elif any(k in sku_low for k in ["kidshoo", "kidshood", "gymhoodie"]):
         category = "DTF Kids Hoodie"
     else:
         category = "DTF Front"
-
-    # Level 3 — Colour: only black or white, everything else = no subfolder
-    if "blk" in sku_low:
-        colour = "black"
-    elif "wht" in sku_low:
-        colour = "white"
-    else:
-        colour = None
-
+    colour = "black" if "blk" in sku_low else "white" if "wht" in sku_low else None
     folder = OUTPUT_ROOT / today / category
     if colour:
         folder = folder / colour
@@ -65,7 +61,8 @@ def get_colour_hex(colour_json):
         except: pass
     return "#ffffff"
 
-def ensure_image(fname):
+def ensure_image(fname, sku=None, is_print_image=False):
+    """Download image if needed. For print images, apply background removal."""
     if not fname: return None
     dest = IMAGES_DIR / fname
     if not (dest.exists() and dest.stat().st_size > 0):
@@ -75,20 +72,25 @@ def ensure_image(fname):
         except Exception as e:
             print(f"  FAILED: {fname} -- {e}")
             return None
+    # Apply background removal to customer print images only (not previews)
+    if is_print_image and sku:
+        cleaned = remove_background(str(dest), sku)
+        if cleaned != str(dest):
+            # Return just the filename relative to IMAGES_DIR
+            return Path(cleaned).name
     return fname
 
-def make_zone(img_json, img_field, text_raw, fonts_json, colours_json, preview_img=None):
+def make_zone(img_json, img_field, text_raw, fonts_json, colours_json,
+              preview_img=None, sku=None):
     fi = get_img(img_json, img_field)
     ft = (text_raw or "").strip()
     if not fi and not ft: return None
     ps, fam, sty = get_font_info(fonts_json)
     return {
-        "customer_image": ensure_image(fi),
+        "customer_image": ensure_image(fi, sku, is_print_image=True),
         "preview_image":  ensure_image((preview_img or "").strip() or None),
         "text_lines":     [l.strip() for l in ft.split("\n") if l.strip()] if ft else [],
-        "font_ps_name":   ps,
-        "font_family":    fam,
-        "font_style":     sty,
+        "font_ps_name":   ps, "font_family": fam, "font_style": sty,
         "colour_hex":     get_colour_hex(colours_json),
     }
 
@@ -112,61 +114,51 @@ rows = cur.fetchall()
 conn.close()
 
 print(f"Found {len(rows)} orders. Writing jobs...\n")
-
-skipped = 0
-written = 0
+written = skipped = 0
 
 for row in rows:
     oid, sku = row[0], row[1]
+    if is_manual_order(row[5], row[11]):
+        print(f"[SKIP-MANUAL] {oid}"); skipped += 1; continue
 
-    # ── Skip embroidery / rhinestone orders ───────────────────────────────────
-    front_fonts  = row[5]
-    back_fonts   = row[11]
-    pocket_fonts = None   # not in query yet — add if needed
-    sleeve_fonts = None   # not in query yet — add if needed
-    if is_manual_order(front_fonts, back_fonts, pocket_fonts, sleeve_fonts):
-        print(f"[SKIP] {oid} -- embroidery/rhinestone font, process manually")
-        skipped += 1
-        continue
-
+    product = detect_product(sku)
     zones = {}
-    front = make_zone(row[2], row[3], row[4], row[5], row[6], row[7])
-    back  = make_zone(row[8], row[9], row[10], row[11], row[12], row[13])
-    pi    = get_img(row[14], row[15])
-    pp    = (row[16] or "").strip() or None
+    front = make_zone(row[2], row[3], row[4], row[5], row[6], row[7], sku=sku, preview_img=row[7])
+    back  = make_zone(row[8], row[9], row[10], row[11], row[12], row[13], sku=sku, preview_img=row[13])
+    pi    = get_img(row[14], row[15]); pp = (row[16] or "").strip() or None
 
-    if front: zones["front"]  = front
-    if back:  zones["back"]   = back
+    if front:
+        w, h = get_zone_sizes(product, "front")
+        front["zone_w_px"] = w; front["zone_h_px"] = h
+        zones["front"] = front
+    if back:
+        w, h = get_zone_sizes(product, "back")
+        back["zone_w_px"] = w; back["zone_h_px"] = h
+        zones["back"] = back
     if pi:
+        w, h = get_zone_sizes(product, "pocket")
         zones["pocket"] = {
-            "customer_image": ensure_image(pi),
-            "preview_image":  ensure_image(pp),
+            "customer_image": ensure_image(pi, sku, is_print_image=True),
+            "preview_image": ensure_image(pp),
             "text_lines": [], "font_ps_name": "Arial-BoldMT",
-            "font_family": "Arial", "font_style": "Bold", "colour_hex": "#ffffff"
+            "font_family": "Arial", "font_style": "Bold", "colour_hex": "#ffffff",
+            "zone_w_px": w, "zone_h_px": h
         }
+    if not zones: skipped += 1; continue
 
-    if not zones:
-        print(f"[SKIP] {oid} -- no zones"); skipped += 1; continue
+    for zone_name in zones:
+        zones[zone_name]["label"] = build_zone_label(zone_name, sku, True)
 
-    # Add label to each zone
-    is_multi_size = True
-    for zone_name in list(zones.keys()):
-        zones[zone_name]["label"] = build_zone_label(zone_name, sku, is_multi_size)
+    tpl = f"C:\\Varsany\\template\\{product}.psd"
+    if not (Path(r"C:\Varsany\template") / f"{product}.psd").exists():
+        tpl = "C:\\Varsany\\template\\combined_template.psd"
 
     out_path = get_output_path(sku, len(zones), oid)
-    job = {
-        "order_id":    oid,
-        "sku":         sku,
-        "combined":    True,
-        "template":    "C:\\Varsany\\template\\combined_template.psd",
-        "zones":       zones,
-        "output_path": out_path,
-        "dpi":         320
-    }
+    job = {"order_id": oid, "sku": sku, "combined": True,
+           "template": tpl, "zones": zones, "output_path": out_path, "dpi": 320}
     (JOBS_DIR / f"{oid}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
     parts = Path(out_path).parts
-    routing = "\\".join(parts[-3:-1])
-    print(f"[JOB] {oid} | {routing} | zones:{list(zones.keys())}")
+    print(f"[JOB] {oid} | {sku} | {'\\'.join(parts[-3:-1])} | zones:{list(zones.keys())}")
     written += 1
 
 print(f"\nDone: {written} jobs written, {skipped} skipped.")
