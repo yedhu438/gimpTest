@@ -16,12 +16,7 @@ cur.execute(f"""
         d.PocketImageJSON,d.PocketImage,d.PocketPreviewImage
     FROM tblCustomOrder o
     JOIN tblCustomOrderDetails d ON o.idCustomOrder = d.idCustomOrder
-    WHERE (
-        (d.FrontImage IS NOT NULL AND LTRIM(RTRIM(d.FrontImage)) != '')
-        OR (d.BackImage IS NOT NULL AND LTRIM(RTRIM(d.BackImage)) != '')
-        OR (d.PocketImage IS NOT NULL AND LTRIM(RTRIM(d.PocketImage)) != '')
-        OR (d.FrontText IS NOT NULL AND LTRIM(RTRIM(d.FrontText)) != '')
-    )
+    WHERE (d.FrontImage IS NOT NULL AND LTRIM(RTRIM(d.FrontImage)) != '')
     AND CAST(o.DateAdd AS DATE) = '{TODAY}'
     ORDER BY o.OrderID, o.SKU
 """)
