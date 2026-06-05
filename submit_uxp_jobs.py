@@ -28,10 +28,11 @@ def get_zone_sizes(product, zone_name):
     w, h = canvas.get(zone_name, canvas.get("front", (3779, 3779)))
     return w, h
 
-def get_output_path(sku, zone_count, order_id, item_count=1):
+MAX_ITEMS_PER_PSD = 7  # Max items per PSD to stay within 30000px PSD limit
+
+def get_output_path(sku, zone_count, order_id, item_count=1, part=None):
     today   = date.today().strftime("%Y-%m-%d")
     sku_low = sku.lower()
-    # Multi-item orders always go to Automated
     if item_count > 1 or zone_count >= 2:
         category = "Automated"
     elif any(k in sku_low for k in ["kidshoo", "kidshood", "gymhoodie"]):
@@ -43,7 +44,9 @@ def get_output_path(sku, zone_count, order_id, item_count=1):
     if colour:
         folder = folder / colour
     folder.mkdir(parents=True, exist_ok=True)
-    return str(folder / f"{order_id}.psd")
+    # Add part suffix for split orders e.g. OrderID_1.psd, OrderID_2.psd
+    fname = f"{order_id}_{part}.psd" if part else f"{order_id}.psd"
+    return str(folder / fname)
 
 def get_img(img_json, img_field):
     if img_json:
@@ -175,20 +178,51 @@ for order_id, items in orders.items():
     if not (Path(r"C:\Varsany\template") / f"{product}.psd").exists():
         tpl = "C:\\Varsany\\template\\combined_template.psd"
 
-    out_path = get_output_path(first_sku, total_print_zones, order_id, len(items))
-    job = {
-        "order_id":    order_id,
-        "sku":         first_sku,
-        "combined":    True,
-        "template":    tpl,
-        "zones":       all_zones,
-        "output_path": out_path,
-        "dpi":         320
-    }
-    (JOBS_DIR / f"{order_id}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
-    parts = Path(out_path).parts
-    routing = "\\".join(parts[-3:-1])
-    print(f"[JOB] {order_id} | {len(items)} item(s) | {total_print_zones} zones | {routing}")
-    written += 1
+    # Split into chunks of MAX_ITEMS_PER_PSD to stay within PSD 30000px limit
+    zone_keys  = list(all_zones.keys())
+    # Group zone keys by item index (zones for same item share same suffix _0, _1 etc.)
+    from itertools import groupby
+    def item_idx(k):
+        parts = k.rsplit("_", 1)
+        return int(parts[1]) if len(parts) == 2 and parts[1].isdigit() else 0
+    zone_keys.sort(key=item_idx)
+    # Chunk by item index
+    chunks = []
+    chunk  = {}
+    last_idx = None
+    item_count_in_chunk = 0
+    for k in zone_keys:
+        idx = item_idx(k)
+        if idx != last_idx:
+            item_count_in_chunk += 1
+            last_idx = idx
+        if item_count_in_chunk > MAX_ITEMS_PER_PSD:
+            chunks.append(chunk)
+            chunk = {}
+            item_count_in_chunk = 1
+        chunk[k] = all_zones[k]
+    if chunk:
+        chunks.append(chunk)
+
+    num_parts = len(chunks)
+    for part_idx, chunk_zones in enumerate(chunks, 1):
+        part = part_idx if num_parts > 1 else None
+        out_path = get_output_path(first_sku, len(chunk_zones), order_id, len(items), part)
+        job_id   = f"{order_id}_{part_idx}" if part else order_id
+        job = {
+            "order_id":    order_id,
+            "sku":         first_sku,
+            "combined":    True,
+            "template":    tpl,
+            "zones":       chunk_zones,
+            "output_path": out_path,
+            "dpi":         320
+        }
+        (JOBS_DIR / f"{job_id}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
+        parts_str = Path(out_path).parts
+        routing   = "\\".join(parts_str[-3:-1])
+        part_label = f" (part {part_idx}/{num_parts})" if num_parts > 1 else ""
+        print(f"[JOB] {order_id}{part_label} | {len(chunk_zones)} zones | {routing}")
+        written += 1
 
 print(f"\nDone: {written} jobs written, {skipped} skipped.")
