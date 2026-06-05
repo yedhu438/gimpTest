@@ -28,7 +28,7 @@ def get_zone_sizes(product, zone_name):
     w, h = canvas.get(zone_name, canvas.get("front", (3779, 3779)))
     return w, h
 
-MAX_ITEMS_PER_PSD = 7  # Max items per PSD to stay within 30000px PSD limit
+MAX_ITEMS_PER_PSD = 6  # Max items per PSD to stay within 30000px PSD limit
 
 def get_output_path(sku, zone_count, order_id, item_count=1, part=None):
     today   = date.today().strftime("%Y-%m-%d")
