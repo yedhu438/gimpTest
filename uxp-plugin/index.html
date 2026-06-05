@@ -16,7 +16,7 @@
 <button id="pickBtn"        style="background:#5a3a6a">📁 Set C:\Varsany Root</button>
 <button id="mkCombinedBtn"  style="background:#2a6a3a">🔨 Create Combined Template</button>
 <button id="mkAllTplBtn"    style="background:#6a3a2a">📦 Create All Product Templates</button>
-<button id="resizeTplBtn"   style="background:#6a4a1a">📐 Resize Templates to 60000px</button>
+<button id="resizeTplBtn"   style="background:#6a4a1a">📐 Resize Templates to 30000px</button>
 <button id="buildBtn"       style="background:#3a6ea5">Build Zone Templates</button>
 <div id="log"></div>
 <script>
@@ -339,10 +339,10 @@ async function processJob(jobEntry){
 
       const {w:docW, h:docH, res} = await getDocSize();
 
-      // Expand canvas to 60000px at runtime to fit any number of items
-      if(docH < 60000){
-        await app.activeDocument.resizeCanvas(docW, 60000, constants.AnchorPosition.TOPLEFT);
-        log("Canvas expanded to 60000px");
+      // Expand canvas to 30000px at runtime to fit multi-item orders (max PSD size)
+      if(docH < 30000){
+        await app.activeDocument.resizeCanvas(docW, 30000, constants.AnchorPosition.TOPLEFT);
+        log("Canvas expanded to 30000px");
       }
 
       if(isCombined){
@@ -653,7 +653,7 @@ async function resizeAllTemplates(){
   if(!VARSANY_ROOT){log("Pick C:\\Varsany root first",true);return;}
   if(processing){log("Busy",true);return;}
   processing=true;
-  const TARGET_H = 60000;
+  const TARGET_H = 30000; // Max PSD height (30000px = ~237cm at 320dpi)
   try{
     const tplFolder = await getOrCreate(VARSANY_ROOT,"template");
     const entries   = await tplFolder.getEntries();
