@@ -50,6 +50,13 @@ def get_colour_hex(colour_json):
 
 def ensure_image(fname, sku=None, is_print=False):
     if not fname: return None
+    # Safety: if fname looks like JSON, try to extract filename from it
+    if fname.strip().startswith("{"):
+        try:
+            names = list(json.loads(fname).values())
+            if names: fname = names[0].strip()
+            else: return None
+        except: return None
     dest = IMAGES_DIR / fname
     if not (dest.exists() and dest.stat().st_size > 0):
         try:
@@ -118,6 +125,14 @@ def write_jobs(orders_dict):
         for idx, row in enumerate(items):
             sku    = row[1]
             suffix = f"_{idx}" if len(items) > 1 else ""
+
+            # Column mapping:
+            # row[2]=FrontImageJSON, row[3]=FrontImage, row[4]=FrontText
+            # row[5]=FrontFonts, row[6]=FrontColours, row[7]=FrontPreviewImage
+            # row[8]=BackImageJSON, row[9]=BackImage, row[10]=BackText
+            # row[11]=BackFonts, row[12]=BackColours, row[13]=BackPreviewImage
+            # row[14]=PocketImageJSON, row[15]=PocketImage, row[16]=PocketPreviewImage
+
             pi = get_img(row[14], row[15])
             if pi:
                 zone = make_zone(row[14], row[15], None, row[5], row[6], row[16], sku, "pocket", product)
@@ -125,11 +140,13 @@ def write_jobs(orders_dict):
                     zone["label"] = build_zone_label("pocket", sku, True)
                     all_zones[f"pocket{suffix}"] = zone
                     total_zones += 1
+
             front = make_zone(row[2], row[3], row[4], row[5], row[6], row[7], sku, "front", product)
             if front:
                 front["label"] = build_zone_label("front", sku, True)
                 all_zones[f"front{suffix}"] = front
                 total_zones += 1
+
             back = make_zone(row[8], row[9], row[10], row[11], row[12], row[13], sku, "back", product)
             if back:
                 back["label"] = build_zone_label("back", sku, True)
