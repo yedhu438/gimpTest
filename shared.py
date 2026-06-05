@@ -112,7 +112,7 @@ def write_jobs(orders_dict):
     written = skipped = 0
 
     for order_id, items in orders_dict.items():
-        if any(is_manual_order(r[5], r[11]) for r in items):
+        if any(is_manual_order(r[6], r[12]) for r in items):  # row[6]=FrontFonts, row[12]=BackFonts
             print(f"[SKIP-MANUAL] {order_id} ({len(items)} items)")
             skipped += 1; continue
 
@@ -126,28 +126,28 @@ def write_jobs(orders_dict):
             sku    = row[1]
             suffix = f"_{idx}" if len(items) > 1 else ""
 
-            # Column mapping:
-            # row[2]=FrontImageJSON, row[3]=FrontImage, row[4]=FrontText
-            # row[5]=FrontFonts, row[6]=FrontColours, row[7]=FrontPreviewImage
-            # row[8]=BackImageJSON, row[9]=BackImage, row[10]=BackText
-            # row[11]=BackFonts, row[12]=BackColours, row[13]=BackPreviewImage
-            # row[14]=PocketImageJSON, row[15]=PocketImage, row[16]=PocketPreviewImage
+            # Column mapping (row[0]=OrderID, row[1]=SKU, row[2]=DateAdd):
+            # row[3]=FrontImageJSON, row[4]=FrontImage, row[5]=FrontText
+            # row[6]=FrontFonts, row[7]=FrontColours, row[8]=FrontPreviewImage
+            # row[9]=BackImageJSON, row[10]=BackImage, row[11]=BackText
+            # row[12]=BackFonts, row[13]=BackColours, row[14]=BackPreviewImage
+            # row[15]=PocketImageJSON, row[16]=PocketImage, row[17]=PocketPreviewImage
 
-            pi = get_img(row[14], row[15])
+            pi = get_img(row[15], row[16])
             if pi:
-                zone = make_zone(row[14], row[15], None, row[5], row[6], row[16], sku, "pocket", product)
+                zone = make_zone(row[15], row[16], None, row[6], row[7], row[17], sku, "pocket", product)
                 if zone:
                     zone["label"] = build_zone_label("pocket", sku, True)
                     all_zones[f"pocket{suffix}"] = zone
                     total_zones += 1
 
-            front = make_zone(row[2], row[3], row[4], row[5], row[6], row[7], sku, "front", product)
+            front = make_zone(row[3], row[4], row[5], row[6], row[7], row[8], sku, "front", product)
             if front:
                 front["label"] = build_zone_label("front", sku, True)
                 all_zones[f"front{suffix}"] = front
                 total_zones += 1
 
-            back = make_zone(row[8], row[9], row[10], row[11], row[12], row[13], sku, "back", product)
+            back = make_zone(row[9], row[10], row[11], row[12], row[13], row[14], sku, "back", product)
             if back:
                 back["label"] = build_zone_label("back", sku, True)
                 all_zones[f"back{suffix}"] = back
