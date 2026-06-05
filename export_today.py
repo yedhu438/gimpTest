@@ -1,95 +1,11 @@
-import sys, json, urllib.request, os
+import sys
 from datetime import date
+from collections import defaultdict
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
-from font_map import get_font_info
-from sku_parser import build_zone_label
-from product_canvas import PRODUCT_CANVAS, SKU_MAP
-from pathlib import Path
+from shared import write_jobs
 
-JOBS_DIR    = Path(r"C:\Varsany\jobs")
-IMAGES_DIR  = Path(r"C:\Varsany\Temp\OrderImages")
-BASE_URL    = "http://www.crssoft.co.uk/CustomOrderImages/"
-OUTPUT_ROOT = Path(os.environ.get("VARSANY_OUTPUT", r"C:\Varsany\Output"))
-TODAY       = "2026-06-03"
-
-def detect_product(sku):
-    for prefix, product in sorted(SKU_MAP, key=lambda x: -len(x[0])):
-        if sku.startswith(prefix): return product
-    return "default"
-
-def get_zone_sizes(product, zone_name):
-    canvas = PRODUCT_CANVAS.get(product, PRODUCT_CANVAS.get("adulttshirt"))
-    w, h = canvas.get(zone_name, canvas.get("front", (3779, 3779)))
-    return w, h
-
-def is_manual_order(front_fonts, back_fonts):
-    combined = " ".join([(front_fonts or ""), (back_fonts or "")]).lower()
-    return "emb" in combined or "rhine" in combined
-
-def get_output_path(sku, zone_count, order_id):
-    sku_low = sku.lower()
-    if zone_count >= 2:
-        category = "Automated"
-    elif any(k in sku_low for k in ["kidshoo", "kidshood", "gymhoodie"]):
-        category = "DTF Kids Hoodie"
-    else:
-        category = "DTF Front"
-    if "blk" in sku_low:
-        colour = "black"
-    elif "wht" in sku_low:
-        colour = "white"
-    else:
-        colour = None
-    folder = OUTPUT_ROOT / TODAY / category
-    if colour:
-        folder = folder / colour
-    folder.mkdir(parents=True, exist_ok=True)
-    return str(folder / f"{order_id}.psd")
-
-def get_img(img_json, img_field):
-    if img_json:
-        try:
-            names = list(json.loads(img_json).values())
-            if names: return names[0].strip()
-        except: pass
-    return (img_field or "").strip() or None
-
-def get_colour_hex(colour_json):
-    if colour_json:
-        try:
-            d = json.loads(colour_json)
-            c = d.get("Colour1","").strip()
-            if c and c.startswith("#"): return c
-        except: pass
-    return "#ffffff"
-
-def ensure_image(fname):
-    if not fname: return None
-    dest = IMAGES_DIR / fname
-    if not (dest.exists() and dest.stat().st_size > 0):
-        try:
-            urllib.request.urlretrieve(BASE_URL + fname, dest)
-            print(f"  Downloaded: {fname}")
-        except Exception as e:
-            print(f"  FAILED: {fname} -- {e}"); return None
-    return fname
-
-def make_zone(img_json, img_field, text_raw, fonts_json, colours_json, preview_img=None):
-    fi = get_img(img_json, img_field)
-    ft = (text_raw or "").strip()
-    if not fi and not ft: return None
-    ps, fam, sty = get_font_info(fonts_json)
-    return {
-        "customer_image": ensure_image(fi),
-        "preview_image":  ensure_image((preview_img or "").strip() or None),
-        "text_lines":     [l.strip() for l in ft.split("\n") if l.strip()] if ft else [],
-        "font_ps_name":   ps, "font_family": fam, "font_style": sty,
-        "colour_hex":     get_colour_hex(colours_json),
-    }
-
-JOBS_DIR.mkdir(parents=True, exist_ok=True)
-IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+TODAY = date.today().strftime("%Y-%m-%d")
 
 conn = get_connection()
 cur  = conn.cursor()
@@ -102,69 +18,15 @@ cur.execute(f"""
     JOIN tblCustomOrderDetails d ON o.idCustomOrder = d.idCustomOrder
     WHERE (d.FrontImage IS NOT NULL AND LTRIM(RTRIM(d.FrontImage)) != '')
     AND CAST(o.DateAdd AS DATE) = '{TODAY}'
-    ORDER BY o.DateAdd ASC
+    ORDER BY o.OrderID, o.SKU
 """)
 rows = cur.fetchall()
 conn.close()
 
-print(f"Found {len(rows)} orders for {TODAY}. Exporting...\n")
-
-written = 0
-skipped = 0
-seen    = set()
-
+orders = defaultdict(list)
 for row in rows:
-    oid, sku = row[0], row[1]
-    if oid in seen: continue
-    seen.add(oid)
+    orders[row[0]].append(row)
 
-    if is_manual_order(row[6], row[12]):
-        print(f"[SKIP-MANUAL] {oid} -- emb/rhine")
-        skipped += 1; continue
-
-    product = detect_product(sku)
-    zones = {}
-    front = make_zone(row[3], row[4], row[5], row[6], row[7], row[8])
-    back  = make_zone(row[9], row[10], row[11], row[12], row[13], row[14])
-    pi    = get_img(row[15], row[16]); pp = (row[17] or "").strip() or None
-
-    if front:
-        w, h = get_zone_sizes(product, "front")
-        front["zone_w_px"] = w; front["zone_h_px"] = h
-        zones["front"] = front
-    if back:
-        w, h = get_zone_sizes(product, "back")
-        back["zone_w_px"] = w; back["zone_h_px"] = h
-        zones["back"]  = back
-    if pi:
-        w, h = get_zone_sizes(product, "pocket")
-        zones["pocket"] = {
-            "customer_image": ensure_image(pi), "preview_image": ensure_image(pp),
-            "text_lines": [], "font_ps_name": "Arial-BoldMT",
-            "font_family": "Arial", "font_style": "Bold", "colour_hex": "#ffffff",
-            "zone_w_px": w, "zone_h_px": h
-        }
-    if not zones: skipped += 1; continue
-
-    for zone_name in list(zones.keys()):
-        zones[zone_name]["label"] = build_zone_label(zone_name, sku, True)
-
-    # Use product-specific template
-    tpl = f"C:\\Varsany\\template\\{product}.psd"
-    if not (Path(r"C:\Varsany\template") / f"{product}.psd").exists():
-        tpl = "C:\\Varsany\\template\\combined_template.psd"
-
-    out_path = get_output_path(sku, len(zones), oid)
-    job = {
-        "order_id": oid, "sku": sku, "combined": True,
-        "template": tpl,
-        "zones": zones, "output_path": out_path, "dpi": 320
-    }
-    (JOBS_DIR / f"{oid}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
-    parts   = Path(out_path).parts
-    routing = "\\".join(parts[-3:-1])
-    time_str = str(row[2])[11:16]
-    print(f"[JOB] {oid} | {sku:<35} | {time_str} | {routing}")
-    written += 1
-
+print(f"Today: {TODAY} | {len(rows)} rows | {len(orders)} unique orders\n")
+written, skipped = write_jobs(orders)
 print(f"\nDone: {written} jobs queued, {skipped} skipped.")
