@@ -291,8 +291,8 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
     const textBounds = await getLayerBounds();
     let textY;
     if(imgEntry){
-      const margin = Math.round(zoneH * 0.04);
-      textY = zoneBottom - textBounds.h - margin;
+      const margin = Math.round(LABEL_PX * 0.5); // gap below image
+      textY = zoneBottom + margin;
     } else {
       // No image — place text 1cm (126px) below the zone start (just under the label)
       textY = yOffset + LABEL_PX;
@@ -338,6 +338,12 @@ async function processJob(jobEntry){
       log("Opened: "+doc.name);
 
       const {w:docW, h:docH, res} = await getDocSize();
+
+      // Expand canvas to 60000px at runtime to fit any number of items
+      if(docH < 60000){
+        await app.activeDocument.resizeCanvas(docW, 60000, constants.AnchorPosition.TOPLEFT);
+        log("Canvas expanded to 60000px");
+      }
 
       if(isCombined){
         // ── COMBINED MODE: stack zones vertically ─────────────────────────────
