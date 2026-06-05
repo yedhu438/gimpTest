@@ -341,11 +341,10 @@ async function processJob(jobEntry){
 
       // Expand canvas to 30000px at runtime to fit multi-item orders
       if(docH < 30000){
-        await bp([{_obj:"resizeCanvas",
-          width:{_unit:"pixelsUnit",_value:docW},
-          height:{_unit:"pixelsUnit",_value:30000},
-          anchor:{_enum:"quadCenterState",_value:"QCSTopLeft"}}]);
-        log("Canvas expanded to 30000px");
+        // Use DOM API resizeCanvas — confirmed working for crop, should work for expand too
+        await app.activeDocument.resizeCanvas(docW, 30000, constants.AnchorPosition.TOPLEFT);
+        const newSize = await getDocSize();
+        log("Canvas expanded: "+newSize.w+"x"+newSize.h+"px");
       }
 
       if(isCombined){
