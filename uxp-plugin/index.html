@@ -339,9 +339,12 @@ async function processJob(jobEntry){
 
       const {w:docW, h:docH, res} = await getDocSize();
 
-      // Expand canvas to 30000px at runtime to fit multi-item orders (max PSD size)
+      // Expand canvas to 30000px at runtime to fit multi-item orders
       if(docH < 30000){
-        await app.activeDocument.resizeCanvas(docW, 30000, constants.AnchorPosition.TOPLEFT);
+        await bp([{_obj:"resizeCanvas",
+          width:{_unit:"pixelsUnit",_value:docW},
+          height:{_unit:"pixelsUnit",_value:30000},
+          anchor:{_enum:"quadCenterState",_value:"QCSTopLeft"}}]);
         log("Canvas expanded to 30000px");
       }
 
@@ -375,7 +378,7 @@ async function processJob(jobEntry){
           log("Zone done: "+zone+" bottom at "+zoneBottom);
         }
 
-        // Crop canvas using DOM API (batchPlay resizeCanvas silently fails)
+        // Crop canvas to actual content height using pixels directly
         const finalH = currentY - GAP_PX;
         log("Cropping to "+finalH+"px via DOM...");
         await app.activeDocument.resizeCanvas(docW, finalH, constants.AnchorPosition.TOPLEFT);
