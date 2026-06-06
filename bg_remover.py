@@ -145,28 +145,13 @@ def remove_background(img_path, sku, output_path=None):
             return img_path  # flat image, nothing to remove
 
         # Step 4 — removal method
-        result = None
+        # Use colour-key for ALL garments — removes only matching colour pixels
+        # AI (rembg) is NOT used as it removes too aggressively (removes non-background too)
         if not light:
-            # Dark garment: colour-key
             print(f"  [bg] colour-key removal ({code})")
-            result = _colour_key(img, garment_rgb)
         else:
-            # Light garment: AI removal
-            try:
-                print(f"  [bg] AI (rembg) removal ({code})")
-                result = _ai_remove(img)
-                px = result.load()
-                w, h = result.size
-                visible = sum(1 for x in range(w) for y in range(h) if px[x, y][3] > 10)
-                if visible / (w * h) < AI_VISIBLE_MIN:
-                    print(f"  [bg] rembg <15% visible — colour-key fallback")
-                    result = _colour_key(img, garment_rgb)
-            except ImportError:
-                print(f"  [bg] rembg not installed — colour-key fallback")
-                result = _colour_key(img, garment_rgb)
-            except Exception as e:
-                print(f"  [bg] rembg error: {e} — colour-key fallback")
-                result = _colour_key(img, garment_rgb)
+            print(f"  [bg] colour-key removal ({code}) — white/light garment")
+        result = _colour_key(img, garment_rgb)
 
         # Step 5 — cleanup
         result = _cleanup(result)
