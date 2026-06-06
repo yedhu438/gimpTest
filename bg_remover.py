@@ -17,12 +17,12 @@ GARMENT_COLOURS = {
     "Ylw":  (255, 220, 0),
 }
 
-DIFF_THRESH    = 40
-EDGE_MATCH_MIN = 0.95
-INTERIOR_MAX   = 0.80
-LIGHT_THRESH   = 160
-ALPHA_THRESH   = 128
-AI_VISIBLE_MIN = 0.15
+DIFF_THRESH    = 40     # max colour distance to consider "matching"
+EDGE_MATCH_MIN = 0.95   # 95% of edge pixels must match garment colour
+INTERIOR_MAX   = 0.80   # 80%+ interior matching = flat image, skip removal
+LIGHT_THRESH   = 160    # above this brightness = light garment
+ALPHA_THRESH   = 128    # alpha below this = fully transparent
+AI_VISIBLE_MIN = 0.15   # rembg <15% visible = fallback to colour-key
 
 
 def colour_diff(c1, c2):
@@ -55,6 +55,7 @@ def _edge_pixels(img_rgb):
 
 
 def _check_edge(img_rgb, garment_rgb):
+    """Step 2 — True if >=95% of edge pixels match garment colour."""
     edge = _edge_pixels(img_rgb)
     if not edge: return False
     match = sum(1 for p in edge if colour_diff(p, garment_rgb) <= DIFF_THRESH)
@@ -62,6 +63,7 @@ def _check_edge(img_rgb, garment_rgb):
 
 
 def _check_interior_flat(img_rgb, garment_rgb):
+    """Step 3 — True if >=80% of interior pixels match (flat image, skip)."""
     w, h = img_rgb.size
     x0, y0 = int(w*0.10), int(h*0.10)
     x1, y1 = int(w*0.90), int(h*0.90)
@@ -76,6 +78,7 @@ def _check_interior_flat(img_rgb, garment_rgb):
 
 
 def _colour_key(img_rgba, garment_rgb):
+    """Remove pixels matching garment colour."""
     result = img_rgba.copy()
     px = result.load()
     w, h = result.size
@@ -93,6 +96,7 @@ def _ai_remove(img_rgba):
 
 
 def _cleanup(img_rgba):
+    """Threshold alpha + crop to content."""
     result = img_rgba.copy().convert("RGBA")
     px = result.load()
     w, h = result.size
@@ -107,28 +111,47 @@ def _cleanup(img_rgba):
 
 def remove_background(img_path, sku, output_path=None):
     """
-    Main entry point — full pipeline.
-    Light garments (white, pink etc.): skip edge check, use AI removal directly.
-    Dark garments (black, navy etc.): edge check first, then colour-key removal.
+    Main entry point.
+    Rule: if image background colour matches garment colour → remove it.
+    Otherwise keep original (different background = intentional).
+
+    Step 1: Get garment colour from SKU
+    Step 2: Sample edges — if >=95% match garment colour → proceed
+            Otherwise → keep original
+    Step 3: Light garments only — if interior is >=80% flat garment colour → skip
+    Step 4: Dark garment → colour-key removal
+            Light garment → AI (rembg), fallback to colour-key
+    Step 5: Cleanup alpha + crop
     """
     try:
         from PIL import Image
 
+        # Step 1
         code, garment_rgb = get_garment_colour(sku)
         if garment_rgb is None:
-            return img_path
+            return img_path  # colour not in map
 
         img = Image.open(img_path).convert("RGBA")
         img_rgb = img.convert("RGB")
-        light = is_light(garment_rgb)
-        result = None
 
-        if light:
-            # Light garments: skip edge check (images often have black borders).
-            # Only skip if interior is entirely flat garment colour (no design).
-            if _check_interior_flat(img_rgb, garment_rgb):
-                return img_path  # flat image, nothing to remove
-            # Use AI removal
+        # Step 2 — edge check (same for ALL garments)
+        if not _check_edge(img_rgb, garment_rgb):
+            return img_path  # background ≠ garment colour, keep original
+
+        light = is_light(garment_rgb)
+
+        # Step 3 — flat check (light garments only)
+        if light and _check_interior_flat(img_rgb, garment_rgb):
+            return img_path  # flat image, nothing to remove
+
+        # Step 4 — removal method
+        result = None
+        if not light:
+            # Dark garment: colour-key
+            print(f"  [bg] colour-key removal ({code})")
+            result = _colour_key(img, garment_rgb)
+        else:
+            # Light garment: AI removal
             try:
                 print(f"  [bg] AI (rembg) removal ({code})")
                 result = _ai_remove(img)
@@ -144,14 +167,8 @@ def remove_background(img_path, sku, output_path=None):
             except Exception as e:
                 print(f"  [bg] rembg error: {e} — colour-key fallback")
                 result = _colour_key(img, garment_rgb)
-        else:
-            # Dark garments: only remove if edges match garment colour
-            if not _check_edge(img_rgb, garment_rgb):
-                return img_path
-            print(f"  [bg] colour-key removal ({code})")
-            result = _colour_key(img, garment_rgb)
 
-        # Cleanup alpha + crop
+        # Step 5 — cleanup
         result = _cleanup(result)
         out = output_path or str(Path(img_path).with_suffix(".clean.png"))
         result.save(out, "PNG")
