@@ -1,4 +1,6 @@
 # bg_remover.py — Background removal for Varsany DTF print orders
+# Rule: if image background colour matches garment colour → remove it (colour-key).
+# Otherwise keep original.
 
 from pathlib import Path
 
@@ -17,12 +19,10 @@ GARMENT_COLOURS = {
     "Ylw":  (255, 220, 0),
 }
 
-DIFF_THRESH    = 40     # max colour distance to consider "matching"
-EDGE_MATCH_MIN = 0.95   # 95% of edge pixels must match garment colour
-INTERIOR_MAX   = 0.80   # 80%+ interior matching = flat image, skip removal
-LIGHT_THRESH   = 160    # above this brightness = light garment
-ALPHA_THRESH   = 128    # alpha below this = fully transparent
-AI_VISIBLE_MIN = 0.15   # rembg <15% visible = fallback to colour-key
+DIFF_THRESH    = 40    # max colour distance to consider "matching"
+EDGE_MATCH_MIN = 0.95  # 95% of edge pixels must match garment colour
+INTERIOR_MAX   = 0.80  # 80%+ interior matching = flat image, skip removal
+ALPHA_THRESH   = 128   # alpha below this → fully transparent
 
 
 def colour_diff(c1, c2):
@@ -35,10 +35,6 @@ def get_garment_colour(sku):
         if suffix.startswith(code):
             return code, rgb
     return None, None
-
-
-def is_light(rgb):
-    return sum(rgb) / 3 > LIGHT_THRESH
 
 
 def _edge_pixels(img_rgb):
@@ -55,7 +51,7 @@ def _edge_pixels(img_rgb):
 
 
 def _check_edge(img_rgb, garment_rgb):
-    """Step 2 — True if >=95% of edge pixels match garment colour."""
+    """True if >=95% of edge pixels match garment colour."""
     edge = _edge_pixels(img_rgb)
     if not edge: return False
     match = sum(1 for p in edge if colour_diff(p, garment_rgb) <= DIFF_THRESH)
@@ -63,7 +59,7 @@ def _check_edge(img_rgb, garment_rgb):
 
 
 def _check_interior_flat(img_rgb, garment_rgb):
-    """Step 3 — True if >=80% of interior pixels match (flat image, skip)."""
+    """True if >=80% of interior pixels match garment colour (flat image, no design)."""
     w, h = img_rgb.size
     x0, y0 = int(w*0.10), int(h*0.10)
     x1, y1 = int(w*0.90), int(h*0.90)
@@ -78,7 +74,7 @@ def _check_interior_flat(img_rgb, garment_rgb):
 
 
 def _colour_key(img_rgba, garment_rgb):
-    """Remove pixels matching garment colour."""
+    """Remove only pixels that match the garment colour. All other colours kept."""
     result = img_rgba.copy()
     px = result.load()
     w, h = result.size
@@ -90,13 +86,8 @@ def _colour_key(img_rgba, garment_rgb):
     return result
 
 
-def _ai_remove(img_rgba):
-    from rembg import remove as rembg_remove
-    return rembg_remove(img_rgba)
-
-
 def _cleanup(img_rgba):
-    """Threshold alpha + crop to content."""
+    """Set alpha < 128 → fully transparent. Crop to content bounding box."""
     result = img_rgba.copy().convert("RGBA")
     px = result.load()
     w, h = result.size
@@ -111,17 +102,14 @@ def _cleanup(img_rgba):
 
 def remove_background(img_path, sku, output_path=None):
     """
-    Main entry point.
-    Rule: if image background colour matches garment colour → remove it.
-    Otherwise keep original (different background = intentional).
+    Main entry point. Removes background if it matches garment colour.
 
-    Step 1: Get garment colour from SKU
-    Step 2: Sample edges — if >=95% match garment colour → proceed
-            Otherwise → keep original
-    Step 3: Light garments only — if interior is >=80% flat garment colour → skip
-    Step 4: Dark garment → colour-key removal
-            Light garment → AI (rembg), fallback to colour-key
-    Step 5: Cleanup alpha + crop
+    Step 1: Get garment RGB from SKU — if not in map, skip.
+    Step 2: Sample 4 edges — if >=95% match garment colour, proceed. Else keep original.
+    Step 3: Sample interior — if >=80% matches (flat image, no design), skip removal.
+    Step 4: Colour-key removal — remove only pixels matching garment colour.
+            Works for ALL garments (black, white, navy, pink etc.) — same rule.
+    Step 5: Cleanup alpha threshold + crop to content.
     """
     try:
         from PIL import Image
@@ -129,31 +117,24 @@ def remove_background(img_path, sku, output_path=None):
         # Step 1
         code, garment_rgb = get_garment_colour(sku)
         if garment_rgb is None:
-            return img_path  # colour not in map
+            return img_path
 
         img = Image.open(img_path).convert("RGBA")
         img_rgb = img.convert("RGB")
 
-        # Step 2 — edge check (same for ALL garments)
+        # Step 2 — edge check
         if not _check_edge(img_rgb, garment_rgb):
-            return img_path  # background ≠ garment colour, keep original
+            return img_path  # background colour ≠ garment colour, keep original
 
-        light = is_light(garment_rgb)
+        # Step 3 — flat image check
+        if _check_interior_flat(img_rgb, garment_rgb):
+            return img_path  # no design to keep, skip
 
-        # Step 3 — flat check (light garments only)
-        if light and _check_interior_flat(img_rgb, garment_rgb):
-            return img_path  # flat image, nothing to remove
-
-        # Step 4 — removal method
-        # Use colour-key for ALL garments — removes only matching colour pixels
-        # AI (rembg) is NOT used as it removes too aggressively (removes non-background too)
-        if not light:
-            print(f"  [bg] colour-key removal ({code})")
-        else:
-            print(f"  [bg] colour-key removal ({code}) — white/light garment")
+        # Step 4 — colour-key removal (same for ALL garments)
+        print(f"  [bg] colour-key removal ({code}): removing {garment_rgb} pixels")
         result = _colour_key(img, garment_rgb)
 
-        # Step 5 — cleanup
+        # Step 5 — cleanup + crop
         result = _cleanup(result)
         out = output_path or str(Path(img_path).with_suffix(".clean.png"))
         result.save(out, "PNG")
@@ -171,10 +152,9 @@ if __name__ == "__main__":
         out = remove_background(sys.argv[1], sys.argv[2])
         print(f"Result: {out}")
     else:
-        print(f"{'SKU':<25} {'Code':<6} {'RGB':<22} {'Light'}")
-        print("=" * 60)
+        print(f"{'SKU':<25} {'Code':<6} {'RGB'}")
+        print("=" * 55)
         for sku in ["MenTee_BlkS","WmnTee_WhtXL","KidsTee_NvyM",
-                    "WmnTee_PnkL","KidsTee_RBluL","KidsTee_Ylw1213"]:
+                    "WmnTee_PnkL","KidsTee_RBluL","MenTee_GryM"]:
             code, rgb = get_garment_colour(sku)
-            l = is_light(rgb) if rgb else "-"
-            print(f"{sku:<25} {str(code):<6} {str(rgb):<22} {l}")
+            print(f"{sku:<25} {str(code):<6} {str(rgb)}")
