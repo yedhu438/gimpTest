@@ -1,4 +1,4 @@
-"""
+﻿"""
 Varsany Batch Processor
 ========================
 Processes all unprocessed orders from the database.
@@ -99,34 +99,58 @@ def _build_psd_via_photoshop(order_id, row, out_path):
     if not template_path:
         return False, f"No template found for {sku}/{product} in {TEMPLATES_FOLDER}"
 
-    # Build zones dict from the order row (mirrors build_zones logic)
+    # Build zones dict from the order row, with full font + dimension info for UXP
+    # Topaz-enhanced images take priority when IsTopazImageProcess=1
+    use_topaz = bool(row.get("IsTopazImageProcess"))
     zone_map = {
-        "front":  ("FrontText",  "FrontFonts",  "FrontColours",  "FrontImage"),
-        "back":   ("BackText",   "BackFonts",   "BackColours",   "BackImage"),
-        "pocket": ("PocketText", "PocketFonts", "PocketColours", "PocketImage"),
-        "sleeve": ("SleeveText", "SleeveFonts", "SleeveColours", "SleeveImage"),
+        "front":  ("FrontText",  "FrontFonts",  "FrontColours",  "FrontImage",  "FrontPreviewImage",  "FrontTopazImage"),
+        "back":   ("BackText",   "BackFonts",   "BackColours",   "BackImage",   "BackPreviewImage",   "BackTopazImage"),
+        "pocket": ("PocketText", "PocketFonts", "PocketColours", "PocketImage", "PocketPreviewImage", "PocketTopazImage"),
+        "sleeve": ("SleeveText", "SleeveFonts", "SleeveColours", "SleeveImage", "SleevePreviewImage", "SleeveTopazImage"),
     }
+    product_canvas = PRODUCT_CANVAS.get(product, PRODUCT_CANVAS["default"])
     zones = {}
-    for zone_name, (txt_col, font_col, col_col, img_col) in zone_map.items():
+    for zone_name, (txt_col, font_col, col_col, img_col, prev_col, topaz_col) in zone_map.items():
         text_raw = (row.get(txt_col) or "").strip()
-        img_raw  = (row.get(img_col) or "").strip()
+        # Prefer Topaz-enhanced image when available; fall back to original
+        img_raw = ""
+        if use_topaz:
+            img_raw = (row.get(topaz_col) or "").strip()
+        if not img_raw:
+            img_raw = (row.get(img_col) or "").strip()
         if not text_raw and not img_raw:
             continue
+        font_name = parse_font(row.get(font_col) or "")
+        zone_w, zone_h = product_canvas.get(zone_name, product_canvas.get("front", (9600, 9600)))
+        # Derive Photoshop font fields — UXP batchPlay uses these to set the font
+        # PS name = remove spaces e.g. "Arial Bold" → "ArialBold" (Photoshop matches by family+style)
         zones[zone_name] = {
-            "customer_image": find_image(img_raw) if img_raw else None,
+            "customer_image": str(find_image(img_raw)) if img_raw else None,
             "text_lines":     parse_texts(text_raw) if text_raw else [],
-            "font_name":      parse_font(row.get(font_col) or ""),
+            "font_name":      font_name,
+            "font_ps_name":   font_name.replace(" ", ""),   # attempt PostScript name
+            "font_family":    font_name,
+            "font_style":     "Regular",
             "colour_hex":     parse_colour(row.get(col_col) or ""),
+            "label":          make_zone_label(zone_name, sku),
+            "zone_w_px":      zone_w,
+            "zone_h_px":      zone_h,
+            "preview_image":  (row.get(prev_col) or None),
         }
 
     if not zones:
         return False, "No zones — no image or text data"
 
-    _ps_submit(order_id, template_path, zones, out_path)
-    success = _ps_wait(order_id, timeout_sec=180)
+    # canvas_w = widest zone width (used as template canvas width)
+    canvas_w = max(z["zone_w_px"] for z in zones.values())
+    canvas_h = max(z["zone_h_px"] for z in zones.values())
+
+    _ps_submit(order_id, template_path, zones, out_path,
+               canvas_w_px=canvas_w, canvas_h_px=canvas_h, combined=True)
+    success = _ps_wait(order_id, timeout_sec=600, use_uxp=True)
     if success:
         return True, out_path
-    return False, "Photoshop worker timed out or errored"
+    return False, "Photoshop UXP timed out or errored"
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 # Database connection is centralised in db.py (reads from .env).
@@ -2498,10 +2522,19 @@ def build_zones(row, product):
     sleeve_font  = parse_font(row.get("SleeveFonts")  or "") or front_font
     sleeve_colour= parse_colour(row.get("SleeveColours") or "") or front_colour
 
+    # Use Topaz-enhanced images when IsTopazImageProcess=1 (fall back to original if Topaz column empty)
+    use_topaz = bool(row.get("IsTopazImageProcess"))
+    def _img(topaz_col, orig_col):
+        if use_topaz:
+            v = (row.get(topaz_col) or "").strip()
+            if v:
+                return v
+        return (row.get(orig_col) or "").strip()
+
     # FRONT — up to 5 images (front first so it appears at top of canvas)
     front_imgs = parse_image_json(row.get("FrontImageJSON") or "")
     front_text = parse_texts(row.get("FrontText") or "")
-    front_img  = row.get("FrontImage") or ""
+    front_img  = _img("FrontTopazImage", "FrontImage")
     if front_imgs:
         for i, fname in enumerate(front_imgs):
             label = "front" if len(front_imgs) == 1 else f"front {i+1}"
@@ -2514,7 +2547,7 @@ def build_zones(row, product):
     # BACK
     back_imgs = parse_image_json(row.get("BackImageJSON") or "")
     back_text = parse_texts(row.get("BackText") or "")
-    back_img  = row.get("BackImage") or ""
+    back_img  = _img("BackTopazImage", "BackImage")
     if back_imgs:
         zones.append(make_zone("back", "back", back_imgs[0], back_text, back_font, back_colour))
     elif back_img:
@@ -2525,7 +2558,7 @@ def build_zones(row, product):
     # POCKET — pocket left + right if 2 images
     pocket_imgs = parse_image_json(row.get("PocketImageJSON") or "")
     pocket_text = parse_texts(row.get("PocketText") or "")
-    pocket_img  = row.get("PocketImage") or ""
+    pocket_img  = _img("PocketTopazImage", "PocketImage")
     if len(pocket_imgs) >= 2:
         zones.append(make_zone("pocket left",  "pocket", pocket_imgs[0], font=pocket_font, colour=pocket_colour))
         zones.append(make_zone("pocket right", "pocket", pocket_imgs[1], font=pocket_font, colour=pocket_colour))
@@ -2539,7 +2572,7 @@ def build_zones(row, product):
     # SLEEVE
     sleeve_imgs = parse_image_json(row.get("SleeveImageJSON") or "")
     sleeve_text = parse_texts(row.get("SleeveText") or "")
-    sleeve_img  = row.get("SleeveImage") or ""
+    sleeve_img  = _img("SleeveTopazImage", "SleeveImage")
     if sleeve_imgs:
         zones.append(make_zone("sleeve", "sleeve", sleeve_imgs[0], sleeve_text, sleeve_font, sleeve_colour))
     elif sleeve_img:
@@ -2947,9 +2980,10 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
     conn  = get_db()
     cur   = conn.cursor()
     if reprocess:
-        where = "1=1"   # skip IsDesignComplete filter when reprocessing
+        where = "1=1"   # skip all filters when reprocessing
     else:
-        where = "(d.IsDesignComplete = 0 OR d.IsDesignComplete IS NULL)"
+        where = ("(d.IsDesignComplete = 0 OR d.IsDesignComplete IS NULL)"
+                 " AND (d.Topaz_Processed = 0 OR d.Topaz_Processed IS NULL)")
     if order_id_filter:
         if isinstance(order_id_filter, list):
             # Flatten any comma-separated values in the list
@@ -2996,6 +3030,15 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
         premium_cols = ""
         conn.close(); conn = get_db(); cur = conn.cursor()
 
+    # Check whether the Topaz columns exist (added by backend team)
+    try:
+        cur.execute("SELECT TOP 0 FrontTopazImage FROM tblCustomOrderDetails")
+        topaz_cols = (", d.FrontTopazImage, d.BackTopazImage, d.PocketTopazImage, d.SleeveTopazImage"
+                      ", d.IsTopazImageProcess")
+    except Exception:
+        topaz_cols = ""
+        conn.close(); conn = get_db(); cur = conn.cursor()
+
     cur.execute(f"""
         SELECT {top}
             o.OrderID, o.SKU, o.ItemType, o.Quantity,
@@ -3009,6 +3052,7 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
             d.SleeveText, d.SleeveFonts, d.SleeveColours,
             d.SleeveImage, d.SleeveImageJSON, d.SleevePreviewImage
             {premium_cols}
+            {topaz_cols}
         FROM tblCustomOrder o
         JOIN tblCustomOrderDetails d ON o.idCustomOrder = d.idCustomOrder
         WHERE {where}
@@ -3019,18 +3063,16 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
     conn.close()
     return rows
 
-def mark_complete(detail_id, out_path):
+def mark_processed(detail_id):
+    """Mark a single order detail row as processed by the automation.
+    Only writes to Topaz_Processed — no other column is touched.
+    """
     conn = get_db()
     conn.cursor().execute("""
         UPDATE tblCustomOrderDetails
-        SET IsDesignComplete  = 1,
-            IsOrderProcess    = 1,
-            ProcessBy         = 'BatchProcessor',
-            ProcessTime       = GETDATE(),
-            AdditionalPSD     = ?,
-            Processed_Orders  = 'Completed'
+        SET Topaz_Processed = 1
         WHERE idCustomOrderDetails = ?
-    """, out_path, detail_id)
+    """, detail_id)
     conn.commit()
     conn.close()
 
@@ -3146,7 +3188,7 @@ def _get_psd_split_paths(base_path):
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
-def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, multizone=False, reprocess=False, date_filter=None, date_after=None, upload_gdrive=False, upload_nas=False, no_bg_remove=False, output_folder=None, font_filter=None, hours=None, no_mark=True, with_images=False):
+def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, multizone=False, reprocess=False, date_filter=None, date_after=None, upload_gdrive=False, upload_nas=False, no_bg_remove=False, output_folder=None, font_filter=None, hours=None, with_images=False):
     log("=" * 60)
     log(f"Varsany Batch Processor  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log(f"Resolution : {DPI} DPI  ({PX_PER_CM:.2f} px/cm)")
@@ -3255,22 +3297,19 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
             # USE_PHOTOSHOP_BRIDGE=1 in .env → try Photoshop first, fall back
             # to the Python writer if PS is not running or no template found.
             ok = False
-            if _USE_PS_BRIDGE and len(group_rows) == 1:
+            msg = ""
+            if _USE_PS_BRIDGE:
                 ok, msg = _build_psd_via_photoshop(order_id, first_row, out_path)
                 if not ok:
-                    log(f"  UXP Bridge FAILED: {msg} - UXP is the only engine, no fallback", "FAIL")
+                    log(f"  UXP Bridge FAILED: {msg} - falling back to Python engine", "WARN")
 
-
-
-
-
-                    ok, msg = build_merged_psd_for_order_group(order_id, group_rows, out_path, no_bg_remove=no_bg_remove)
+            if not ok:
+                ok, msg = build_merged_psd_for_order_group(order_id, group_rows, out_path, no_bg_remove=no_bg_remove)
 
             if ok:
-                if not no_mark:
-                    for row in group_rows:
-                        mark_complete(row["idCustomOrderDetails"], out_path)
                 log(f"  OK  {msg}", "OK")
+                for row in group_rows:
+                    mark_processed(row["idCustomOrderDetails"])
                 ok_count += 1
                 if upload_gdrive and not dry_run:
                     for _split in _get_psd_split_paths(out_path):
@@ -3311,7 +3350,6 @@ if __name__ == "__main__":
     parser.add_argument("--output",        type=str, default=None, help="Override output folder e.g. C:\\Varsany\\Output\\test1")
     parser.add_argument("--font-filter",   type=str, default=None, help="Comma-separated font name substrings e.g. 'Mermaid Font,Block Font'")
     parser.add_argument("--hours",         type=int, default=None, help="Only process orders added in the last N hours e.g. --hours 2")
-    parser.add_argument("--mark",          action="store_true",    help="Mark orders as complete in the DB after export (requires UPDATE permission)")
     parser.add_argument("--with-images",   action="store_true",    help="Only process orders that have a customer image upload")
     args = parser.parse_args()
 
@@ -3333,6 +3371,5 @@ if __name__ == "__main__":
         output_folder  = args.output,
         font_filter    = args.font_filter,
         hours          = args.hours,
-        no_mark        = not args.mark,
         with_images    = args.with_images,
     )

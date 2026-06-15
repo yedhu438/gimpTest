@@ -26,7 +26,7 @@ _nas_default = bool(os.environ.get("NAS_PASS"))
 
 def main():
     parser = argparse.ArgumentParser(description="Varsany Automation Daemon")
-    parser.add_argument("--dry-run",    action="store_true", help="Preview only — no files written, no DB updates")
+    parser.add_argument("--dry-run",    action="store_true", help="Preview only — no files written")
     parser.add_argument("--interval",   type=int, default=POLL_SECONDS, help="Seconds between polls (default 60)")
     parser.add_argument("--nas",    dest="upload_nas", action="store_true",  default=_nas_default,
                         help="Upload finished PSDs to Synology NAS (auto-enabled when NAS_PASS is set in .env)")
@@ -53,7 +53,6 @@ def main():
             run_batch(
                 dry_run      = args.dry_run,
                 upload_nas   = args.upload_nas,
-                no_mark      = args.dry_run,  # mark complete in DB unless dry-run
                 hours        = args.hours,
                 date_after   = args.date_after,
             )

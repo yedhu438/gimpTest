@@ -3,10 +3,11 @@ import json, urllib.request, os
 from datetime import date
 from pathlib import Path
 
-JOBS_DIR    = Path(r"C:\Varsany\jobs")
-IMAGES_DIR  = Path(r"C:\Varsany\Temp\OrderImages")
+_base       = os.environ.get("VARSANY_BASE", r"C:\Varsany")
+JOBS_DIR    = Path(os.environ.get("VARSANY_JOBS",   os.path.join(_base, "jobs")))
+IMAGES_DIR  = Path(os.environ.get("VARSANY_IMAGES", os.path.join(_base, "Temp", "OrderImages")))
 BASE_URL    = "http://www.crssoft.co.uk/CustomOrderImages/"
-OUTPUT_ROOT = Path(os.environ.get("VARSANY_OUTPUT", r"C:\Varsany\Output"))
+OUTPUT_ROOT = Path(os.environ.get("VARSANY_OUTPUT", os.path.join(_base, "Output")))
 MAX_ITEMS_PER_PSD = 6  # Max zones per PSD to stay within 30000px PSD limit
 
 def is_manual_order(front_fonts, back_fonts, pocket_fonts=None, sleeve_fonts=None):
@@ -155,9 +156,10 @@ def write_jobs(orders_dict):
 
         if not all_zones: skipped += 1; continue
 
-        tpl = f"C:\\Varsany\\template\\{product}.psd"
-        if not (Path(r"C:\Varsany\template") / f"{product}.psd").exists():
-            tpl = "C:\\Varsany\\template\\combined_template.psd"
+        _tpl_dir = Path(os.environ.get("VARSANY_TEMPLATES", os.path.join(_base, "template")))
+        tpl = str(_tpl_dir / f"{product}.psd")
+        if not (_tpl_dir / f"{product}.psd").exists():
+            tpl = str(_tpl_dir / "combined_template.psd")
 
         # Split into chunks of MAX_ITEMS_PER_PSD
         def item_idx(k):

@@ -13,7 +13,7 @@
 </head>
 <body>
 <div id="status"><span class="dot"></span>Starting...</div>
-<button id="pickBtn"        style="background:#5a3a6a">📁 Set C:\Varsany Root</button>
+<button id="pickBtn"        style="background:#5a3a6a">📁 Set Root Folder (C:\gimpTest)</button>
 <button id="mkCombinedBtn"  style="background:#2a6a3a">🔨 Create Combined Template</button>
 <button id="mkAllTplBtn"    style="background:#6a3a2a">📦 Create All Product Templates</button>
 <button id="resizeTplBtn"   style="background:#6a4a1a">📐 Resize Templates to 30000px</button>
@@ -46,8 +46,12 @@ async function writeJSON(folder,filename,data){const f=await folder.createFile(f
 
 // ── Token / folder init ───────────────────────────────────────────────────────
 async function loadRootToken(){
-  try{const v=await fs.getEntryWithUrl("file:///C:/Varsany");const tf=await v.getEntry("uxp_token.txt");return await tf.read({format:uxp.storage.formats.utf8});}
-  catch(e){return null;}
+  // Try gimpTest first, then legacy Varsany
+  for(const rootPath of ["file:///C:/gimpTest","file:///C:/Varsany"]){
+    try{const v=await fs.getEntryWithUrl(rootPath);const tf=await v.getEntry("uxp_token.txt");return await tf.read({format:uxp.storage.formats.utf8});}
+    catch(e){}
+  }
+  return null;
 }
 async function setupFolders(root){
   VARSANY_ROOT=root; DATA_FOLDER=root;
@@ -61,9 +65,9 @@ async function initFolders(){
     if(token){const r=await fs.getEntryForPersistentToken(token.trim());await setupFolders(r);log("Ready: "+r.nativePath);return;}
   }catch(e){log("Token failed: "+e.message,true);}
   try{
-    const r=await fs.getEntryWithUrl("file:///C:/Varsany");await setupFolders(r);log("Ready: C:\\Varsany (URL)");return;
+    const r=await fs.getEntryWithUrl("file:///C:/gimpTest");await setupFolders(r);log("Ready: C:\\gimpTest (URL)");return;
   }catch(e){}
-  log("📁 Click 'Set C:\\Varsany Root' to start",true);
+  log("📁 Click 'Set Root Folder' to start",true);
 }
 async function pickRoot(){
   try{
@@ -77,9 +81,22 @@ async function pickRoot(){
 }
 
 // ── Path resolver ─────────────────────────────────────────────────────────────
+function stripRootPrefix(absPath){
+  // Dynamically strip the VARSANY_ROOT native path prefix so we get a relative path
+  const normalized = absPath.replace(/\\/g,"/");
+  if(VARSANY_ROOT && VARSANY_ROOT.nativePath){
+    const rootNorm = VARSANY_ROOT.nativePath.replace(/\\/g,"/").replace(/\/?$/,"/");
+    if(normalized.toLowerCase().startsWith(rootNorm.toLowerCase()))
+      return normalized.slice(rootNorm.length);
+  }
+  // Fallback: strip known roots
+  return normalized
+    .replace(/^[A-Za-z]:\/gimpTest\//,"")
+    .replace(/^[A-Za-z]:\/Varsany\//,"");
+}
 async function getEntry(absPath){
   if(VARSANY_ROOT){
-    const rel=absPath.replace(/\\/g,"/").replace(/^[A-Za-z]:\/Varsany\//,"");
+    const rel=stripRootPrefix(absPath);
     const parts=rel.split("/").filter(Boolean);
     let e=VARSANY_ROOT;
     for(const p of parts) e=await e.getEntry(p);
@@ -90,7 +107,7 @@ async function getEntry(absPath){
 async function getOutputEntry(outputPath){
   try{
     // Build path segment by segment from VARSANY_ROOT, creating folders as needed
-    const rel = outputPath.replace(/\\/g,"/").replace(/^[A-Za-z]:\/Varsany\//,"");
+    const rel = stripRootPrefix(outputPath);
     const parts = rel.split("/").filter(Boolean);
     const filename = parts.pop();
     let dir = VARSANY_ROOT;
@@ -339,12 +356,19 @@ async function processJob(jobEntry){
 
       const {w:docW, h:docH, res} = await getDocSize();
 
-      // Expand canvas to 30000px at runtime to fit multi-item orders
-      if(docH < 30000){
-        // Use DOM API resizeCanvas — confirmed working for crop, should work for expand too
-        await app.activeDocument.resizeCanvas(docW, 30000, constants.AnchorPosition.TOPLEFT);
+      // Calculate exact canvas height needed — avoid allocating a massive 30000px canvas
+      // Formula: for each zone → LABEL_PX + zone_h_px + GAP_PX, then crop at the end
+      const neededH = isCombined
+        ? Object.values(job.zones).reduce((sum, d) => sum + LABEL_PX + (d.zone_h_px || docH) + GAP_PX, GAP_PX)
+        : docH;  // single-zone mode uses existing template dimensions
+      const targetH = Math.max(neededH, docH);  // never shrink the template
+
+      if(docH < targetH){
+        await app.activeDocument.resizeCanvas(docW, targetH, constants.AnchorPosition.TOPLEFT);
         const newSize = await getDocSize();
-        log("Canvas expanded: "+newSize.w+"x"+newSize.h+"px");
+        log("Canvas expanded: "+newSize.w+"x"+newSize.h+"px (needed "+targetH+"px)");
+      } else {
+        log("Canvas ok: "+docW+"x"+docH+"px");
       }
 
       if(isCombined){
@@ -626,13 +650,9 @@ async function createAllTemplates(){
             depth:8,
             profile:"U.S. Web Coated (SWOP) v2"
           }}]);
-          // Save using native absolute path
-          const nativePath = "C:\\Varsany\\template\\"+name+"_combined.psd";
-          await bp([{_obj:"save",
-            as:{_obj:"photoshop35Format",maximizeCompatibility:true},
-            in:{_path:nativePath,_kind:"local"},
-            saveStage:{_enum:"saveStageType",_value:"saveBegin"}
-          }]);
+          // Save via UXP entry (uses VARSANY_ROOT dynamically)
+          const tplFileEntry = await tplFolder.createFile(name+"_combined.psd",{overwrite:true});
+          await app.activeDocument.saveAs.psd(tplFileEntry,{embedColorProfile:true},true);
           openDocs.push(app.activeDocument);
           log("Saved: "+name+"_combined.psd ("+wpx+"x15000px)");
         }catch(e){
@@ -645,7 +665,7 @@ async function createAllTemplates(){
       }
       log("Closed "+openDocs.length+" documents.");
     },{commandName:"Create all product templates"});
-    log("All templates created in C:\\Varsany\\template\\");
+    log("All templates created in template\\ folder");
   }catch(e){log("Error: "+e.message,true);}
   finally{processing=false;}
 }

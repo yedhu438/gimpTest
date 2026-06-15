@@ -26,3 +26,29 @@ htmlcov/
 .claude
 .env.yedhu
 .env.revathi.env.vps
+
+# Runtime folders — machine-specific, not in git
+Output/
+Temp/
+done/
+error/
+images/
+Fonts/
+template/
+
+# Runtime files
+*.log
+batch_log.txt
+process_log.txt
+export_today_log.txt
+export_uxp_log.txt
+export_uxp_err.txt
+export_images_test.log
+export_images_test_err.log
+uxp_token.txt
+trigger_ps.vbs
+
+# Large binary files
+*.psd
+*.psb
+*.bak

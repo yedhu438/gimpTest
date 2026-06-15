@@ -4,12 +4,10 @@
   "name": "Varsany Order Processor",
   "version": "1.0.0",
   "main": "index.html",
-  "host": [
-    {
-      "app": "PS",
-      "minVersion": "24.0"
-    }
-  ],
+  "host": {
+    "app": "PS",
+    "minVersion": "24.0"
+  },
   "entrypoints": [
     {
       "type": "panel",
@@ -21,8 +19,11 @@
       "show": true
     }
   ],
-  "permissions": {
+  "requiredPermissions": {
     "localFileSystem": "fullAccess",
-    "allowCodeGenerationFromStrings": true
+    "allowCodeGenerationFromStrings": true,
+    "network": {
+      "domains": "all"
+    }
   }
 }

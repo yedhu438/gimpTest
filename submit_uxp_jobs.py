@@ -1,6 +1,6 @@
 import sys
 from collections import defaultdict
-sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
+sys.path.insert(0, r"C:\gimpTest")
 from db import get_connection
 from shared import write_jobs
 

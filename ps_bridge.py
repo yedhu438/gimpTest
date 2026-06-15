@@ -9,7 +9,7 @@ No pywin32 needed — uses a lightweight VBScript one-liner via cscript.exe.
 Photoshop must be open before calling trigger_and_wait().
 """
 
-import json, os, shutil, subprocess, time
+import json, os, shutil, subprocess, time, urllib.request, urllib.parse
 from datetime import datetime
 from pathlib import Path
 
@@ -34,11 +34,12 @@ def _resolve_bridge_root() -> Path:
     # Fallback
     return Path(r"C:\Varsany\photoshop_bridge")
 
-_BRIDGE_ROOT = _resolve_bridge_root()
-JOBS_DIR     = _BRIDGE_ROOT / "jobs"
-ASSETS_DIR   = _BRIDGE_ROOT / "images"
-DONE_DIR     = _BRIDGE_ROOT / "done"
-ERROR_DIR    = _BRIDGE_ROOT / "error"
+_BRIDGE_ROOT     = _resolve_bridge_root()
+JOBS_DIR         = _BRIDGE_ROOT / "jobs"
+ASSETS_DIR       = _BRIDGE_ROOT / "Temp" / "OrderImages"   # UXP getImageEntry looks here
+DONE_DIR         = _BRIDGE_ROOT / "done"
+ERROR_DIR        = _BRIDGE_ROOT / "error"
+IMAGE_SERVER_URL = os.environ.get("IMAGE_SERVER_URL", "http://www.crssoft.co.uk/CustomOrderImages/")
 
 for _d in (JOBS_DIR, ASSETS_DIR, DONE_DIR, ERROR_DIR):
     _d.mkdir(parents=True, exist_ok=True)
@@ -46,37 +47,89 @@ for _d in (JOBS_DIR, ASSETS_DIR, DONE_DIR, ERROR_DIR):
 JSX_PATH = str(Path(__file__).parent / "ps_worker.jsx")
 
 # ── Submit job ─────────────────────────────────────────────────────────────────
-def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, canvas_h_px=3780):
+def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, canvas_h_px=3780, combined=True):
     """
-    Write a job JSON for Photoshop.
+    Write a job JSON for Photoshop UXP plugin to pick up.
     zones = {
         "front": {
-            "customer_image": "C:/path/to/image.jpg",   # path on disk, or None
+            "customer_image": "C:/path/to/image.jpg",   # full path on disk, or None
             "text_lines":     ["Line 1", "Line 2"],      # list of strings, or []
-            "font_name":      "Arial Bold",
+            "font_name":      "Arial Bold",              # display name
+            "font_ps_name":   "Arial-BoldMT",            # PostScript name for batchPlay
+            "font_family":    "Arial",
+            "font_style":     "Bold",
             "colour_hex":     "#ffffff",
+            "label":          "FRONT",
+            "zone_w_px":      9600,
+            "zone_h_px":      9600,
         },
         ...
     }
+    combined=True  → UXP stacks zones vertically (needed for blank templates)
+    combined=False → UXP uses per-layer CustomerText_ slots (for layered templates)
     """
-    # Copy customer images to shared assets folder
+    # Ensure images are in ASSETS_DIR (Temp/OrderImages) where UXP getImageEntry looks
     clean_zones = {}
     for zone_name, zone in zones.items():
         img_src = (zone.get("customer_image") or "").strip()
+        img_path = None
         if img_src and os.path.isfile(img_src):
-            # Copy to plugin data images folder using just the original filename
             img_filename = Path(img_src).name
             dest = ASSETS_DIR / img_filename
-            shutil.copy2(img_src, dest)
-            img_path = img_filename  # just filename — plugin looks it up by name
-        else:
-            img_path = img_src if img_src else None
+            if not dest.exists():          # skip copy if already downloaded there
+                shutil.copy2(img_src, dest)
+            img_path = img_filename        # UXP looks up by filename in Temp/OrderImages
+
+        # Download preview image (URL from DB) to ASSETS_DIR so UXP can find it locally
+        preview_src = (zone.get("preview_image") or "").strip()
+        preview_path = None
+        if preview_src:
+            if preview_src.startswith("http"):
+                # Save with bare basename — UXP looks up by basename in Temp/OrderImages
+                url_basename = Path(urllib.parse.urlparse(preview_src).path).name or "preview.jpg"
+                dest_p = ASSETS_DIR / url_basename
+                if not dest_p.exists():
+                    try:
+                        urllib.request.urlretrieve(preview_src, dest_p)
+                        print(f"[PS Bridge] Preview downloaded: {url_basename}")
+                    except Exception as e:
+                        print(f"[PS Bridge] Preview download failed ({zone_name}): {e}")
+                        url_basename = None
+                preview_path = url_basename
+            elif os.path.isfile(preview_src):
+                # Local file — copy to ASSETS_DIR using bare filename
+                url_basename = Path(preview_src).name
+                dest_p = ASSETS_DIR / url_basename
+                if not dest_p.exists():
+                    shutil.copy2(preview_src, dest_p)
+                preview_path = url_basename
+            else:
+                # Bare filename from DB (e.g. "64267431450482-frontpreview.jpg")
+                # Build full crssoft URL and download to ASSETS_DIR
+                url_basename = Path(preview_src).name
+                dest_p = ASSETS_DIR / url_basename
+                if not dest_p.exists():
+                    try:
+                        url = IMAGE_SERVER_URL.rstrip("/") + "/" + url_basename
+                        urllib.request.urlretrieve(url, dest_p)
+                        print(f"[PS Bridge] Preview downloaded from crssoft: {url_basename}")
+                    except Exception as e:
+                        print(f"[PS Bridge] Preview download failed ({zone_name}): {e}")
+                        url_basename = None
+                preview_path = url_basename
 
         clean_zones[zone_name] = {
             "customer_image": img_path,
             "text_lines":     zone.get("text_lines") or [],
             "font_name":      zone.get("font_name") or "Arial Bold",
+            "font_ps_name":   zone.get("font_ps_name") or "Arial-BoldMT",
+            "font_family":    zone.get("font_family") or "Arial",
+            "font_style":     zone.get("font_style") or "Bold",
             "colour_hex":     zone.get("colour_hex") or "#ffffff",
+            "label":          zone.get("label") or zone_name.upper(),
+            "zone_w_px":      zone.get("zone_w_px") or canvas_w_px,
+            "zone_h_px":      zone.get("zone_h_px") or canvas_h_px,
+            "preview_image":  preview_path,   # local filename in Temp/OrderImages, or None
         }
 
     job = {
@@ -84,6 +137,7 @@ def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, ca
         "template":     str(template_path),
         "zones":        clean_zones,
         "output_path":  str(output_path),
+        "combined":     combined,          # True = stacked layout for blank templates
         "canvas_w_px":  canvas_w_px,
         "canvas_h_px":  canvas_h_px,
         "dpi":          320,
@@ -91,6 +145,12 @@ def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, ca
     }
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    # Clear any stale done/error files from previous runs for this order
+    for stale in [DONE_DIR / f"{order_id}.json", ERROR_DIR / f"{order_id}.json"]:
+        try:
+            stale.unlink(missing_ok=True)
+        except Exception:
+            pass
     job_file = JOBS_DIR / f"{order_id}.json"
     job_file.write_text(json.dumps(job, indent=2), encoding="utf-8")
     print(f"[PS Bridge] Job submitted: {order_id}")
@@ -122,15 +182,17 @@ def _trigger_photoshop():
 
 
 # ── Wait for result ────────────────────────────────────────────────────────────
-def wait_for_completion(order_id, timeout_sec=180):
+def wait_for_completion(order_id, timeout_sec=300, use_uxp=True):
     """
-    Trigger Photoshop, then poll until job is done or errors.
-    Returns True on success, False on error or timeout.
+    Poll until UXP plugin marks job done or errored.
+    use_uxp=True  → skip VBScript trigger; UXP plugin polls jobs/ every 3 s automatically
+    use_uxp=False → legacy mode: fire VBScript to run ps_worker.jsx via COM first
     """
     done_file  = DONE_DIR  / f"{order_id}.json"
     error_file = ERROR_DIR / f"{order_id}.json"
 
-    _trigger_photoshop()
+    if not use_uxp:
+        _trigger_photoshop()   # legacy JSX mode only
 
     deadline = time.time() + timeout_sec
     while time.time() < deadline:

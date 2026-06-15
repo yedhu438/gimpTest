@@ -31,7 +31,6 @@ OLD_LOOP = '''    for i, row in enumerate(orders, 1):
         try:
             ok, msg = build_psd_for_order(order_id, row, out_path)
             if ok:
-                mark_complete(detail_id, out_path)
                 log(f"  OK  {msg}", "OK")
                 ok_count += 1
             else:
