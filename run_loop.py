@@ -40,9 +40,14 @@ def main():
 
     interval = args.interval
 
+    # Capture startup time — only orders placed AFTER this moment are processed.
+    # Overridden by --date-after if explicitly passed.
+    startup_cutoff = args.date_after or datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
     log("=" * 60)
     log(f"Varsany Automation Daemon started  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log(f"Poll interval : {interval}s")
+    log(f"Processing orders after : {startup_cutoff}")
     log(f"Dry run       : {args.dry_run}")
     log(f"NAS upload    : {args.upload_nas}  (host: {os.environ.get('NAS_HOST', 'not set')})")
     log("Press Ctrl+C to stop")
@@ -54,7 +59,7 @@ def main():
                 dry_run      = args.dry_run,
                 upload_nas   = args.upload_nas,
                 hours        = args.hours,
-                date_after   = args.date_after,
+                date_after   = startup_cutoff,
             )
         except KeyboardInterrupt:
             log("Daemon stopped by user.")
