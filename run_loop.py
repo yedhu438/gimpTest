@@ -1,12 +1,12 @@
 """
 run_loop.py — Varsany Automation Daemon
-Runs continuously on the VPS. Every 60 seconds it checks the live database
+Runs continuously. Every 3 seconds it checks the live database
 for unprocessed orders and generates PSD files automatically.
 
 Usage:
     py run_loop.py              # normal production run
     py run_loop.py --dry-run    # preview only, no files written
-    py run_loop.py --interval 30  # poll every 30 seconds
+    py run_loop.py --interval 5  # override poll interval
 """
 
 import sys, os, time, argparse, traceback
@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from batch_processor import run_batch, log
 # Note: batch_processor loads .env via load_dotenv(), so NAS_PASS is available here.
 
-POLL_SECONDS = 60  # default poll interval
+POLL_SECONDS = 3  # default poll interval
 
 # NAS upload is enabled automatically when NAS_PASS is set in .env
 _nas_default = bool(os.environ.get("NAS_PASS"))
@@ -27,7 +27,7 @@ _nas_default = bool(os.environ.get("NAS_PASS"))
 def main():
     parser = argparse.ArgumentParser(description="Varsany Automation Daemon")
     parser.add_argument("--dry-run",    action="store_true", help="Preview only — no files written")
-    parser.add_argument("--interval",   type=int, default=POLL_SECONDS, help="Seconds between polls (default 60)")
+    parser.add_argument("--interval",   type=int, default=POLL_SECONDS, help="Seconds between polls (default 3)")
     parser.add_argument("--nas",    dest="upload_nas", action="store_true",  default=_nas_default,
                         help="Upload finished PSDs to Synology NAS (auto-enabled when NAS_PASS is set in .env)")
     parser.add_argument("--no-nas", dest="upload_nas", action="store_false",
