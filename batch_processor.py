@@ -3000,8 +3000,7 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
     if reprocess:
         where = "1=1"   # skip all filters when reprocessing
     else:
-        where = ("d.IsDesignComplete IS NULL"
-                 " AND (d.Topaz_Processed = 0 OR d.Topaz_Processed IS NULL)"
+        where = ("(d.Topaz_Processed = 0 OR d.Topaz_Processed IS NULL)"
                  " AND o.DateAdd >= '2026-06-16'")
     if order_id_filter:
         if isinstance(order_id_filter, list):
