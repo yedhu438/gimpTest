@@ -100,8 +100,11 @@ def _build_psd_via_photoshop(order_id, row, out_path):
         return False, f"No template found for {sku}/{product} in {TEMPLATES_FOLDER}"
 
     # Build zones dict from the order row, with full font + dimension info for UXP
-    # Topaz-enhanced images take priority when IsTopazImageProcess=1
-    use_topaz = bool(row.get("IsTopazImageProcess"))
+    # use_topaz: True when IsTopazImageProcess=1 (Topaz done).
+    # IsTopazImageProcess=None means either text-only OR image not yet Topaz'd —
+    # caller already resolved which image filename to use before reaching here.
+    _topaz_flag = row.get("IsTopazImageProcess")
+    use_topaz   = (_topaz_flag == 1 or _topaz_flag is True)
     zone_map = {
         "front":  ("FrontText",  "FrontFonts",  "FrontColours",  "FrontImage",  "FrontPreviewImage",  "FrontTopazImage"),
         "back":   ("BackText",   "BackFonts",   "BackColours",   "BackImage",   "BackPreviewImage",   "BackTopazImage"),
@@ -157,26 +160,12 @@ def _build_psd_via_photoshop(order_id, row, out_path):
 
 # Paths — override any of these in your .env file
 _base         = os.environ.get("VARSANY_BASE",    r"C:\Varsany")
-_images_extra = os.environ.get("VARSANY_IMAGES",  r"W:\images\Feb-Image,W:\images\Jan-Image")
-IMAGE_FOLDERS = [p.strip() for p in _images_extra.split(",") if p.strip()] + \
-                [os.path.join(_base, "Uploads")]
 FONT_FOLDERS  = [os.path.join(_base, "Fonts")] + \
                 [p.strip() for p in os.environ.get("VARSANY_FONTS_EXTRA", r"W:\fonts").split(",") if p.strip()] + \
                 [r"C:\Windows\Fonts"]  # also pick up any fonts installed system-wide
 OUTPUT_FOLDER = os.environ.get("VARSANY_OUTPUT", os.path.join(_base, "Output"))
 LOG_FILE      = os.environ.get("VARSANY_LOG",    os.path.join(_base, "batch_log.txt"))
 TEMP_FOLDER   = os.environ.get("VARSANY_TEMP",   os.path.join(_base, "Temp"))
-
-# Auto-discover W:\test*\DTFUnshippedImages_* bulk download folders
-_W = r"W:\\"
-if os.path.exists(_W):
-    for _entry in os.listdir(_W):
-        if _entry.lower().startswith("test"):
-            _test_dir = os.path.join(_W, _entry)
-            if os.path.isdir(_test_dir):
-                for _sub in os.listdir(_test_dir):
-                    if _sub.startswith("DTFUnshippedImages"):
-                        IMAGE_FOLDERS.append(os.path.join(_test_dir, _sub))
 
 IMAGE_SERVER_URL = os.environ.get("IMAGE_SERVER_URL", "http://www.crssoft.co.uk/CustomOrderImages/")
 
@@ -186,15 +175,7 @@ K_GAMMA   = 1.0             # K channel gamma — 1.0 = no adjustment (linear IC
 
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# ─── BUILD IMAGE INDEX ────────────────────────────────────────────────────────
-
-print("Building image index...")
-IMAGE_INDEX = {}
-for _folder in IMAGE_FOLDERS:
-    if os.path.exists(_folder):
-        for _f in os.listdir(_folder):
-            IMAGE_INDEX[_f.lower()] = os.path.join(_folder, _f)
-print(f"  Indexed {len(IMAGE_INDEX):,} images")
+# Images are downloaded on-demand from IMAGE_SERVER_URL — no local index needed.
 
 # ─── BUILD FONT INDEX ─────────────────────────────────────────────────────────
 # Maps normalised font name -> full file path
@@ -569,28 +550,24 @@ def log(msg, level="INFO"):
         pass
 
 def find_image(filename):
+    """Download image from crssoft image server and return local temp path, or None on failure."""
     if not filename or not filename.strip():
         return None
-    fname = filename.strip().lower()
-    if fname in IMAGE_INDEX:
-        return IMAGE_INDEX[fname]
-    base = os.path.splitext(fname)[0]
-    for ext in ['.jpg', '.jpeg', '.png', '.webp']:
-        if (base + ext) in IMAGE_INDEX:
-            return IMAGE_INDEX[base + ext]
-    # Fall back to downloading from image server
-    if IMAGE_SERVER_URL:
-        url = IMAGE_SERVER_URL.rstrip("/") + "/" + filename.strip()
-        dest = os.path.join(TEMP_FOLDER, filename.strip())
-        try:
-            os.makedirs(TEMP_FOLDER, exist_ok=True)
-            import urllib.request
-            urllib.request.urlretrieve(url, dest)
-            IMAGE_INDEX[fname] = dest
-            return dest
-        except Exception:
-            pass
-    return None
+    if not IMAGE_SERVER_URL:
+        return None
+    url  = IMAGE_SERVER_URL.rstrip("/") + "/" + filename.strip()
+    dest = os.path.join(TEMP_FOLDER, filename.strip())
+    # Return cached temp file if already downloaded this session
+    if os.path.isfile(dest):
+        return dest
+    try:
+        os.makedirs(TEMP_FOLDER, exist_ok=True)
+        import urllib.request
+        urllib.request.urlretrieve(url, dest)
+        return dest
+    except Exception as e:
+        log(f"  Image download failed ({filename}): {e}", "WARN")
+        return None
 
 def download_preview(url):
     """Load a preview image from a URL or a local filename, return PIL Image or None."""
@@ -2522,8 +2499,11 @@ def build_zones(row, product):
     sleeve_font  = parse_font(row.get("SleeveFonts")  or "") or front_font
     sleeve_colour= parse_colour(row.get("SleeveColours") or "") or front_colour
 
-    # Use Topaz-enhanced images when IsTopazImageProcess=1 (fall back to original if Topaz column empty)
-    use_topaz = bool(row.get("IsTopazImageProcess"))
+    # Use Topaz-enhanced images when IsTopazImageProcess=1 (Topaz done).
+    # _topaz_override is set by run_batch when it re-checked DB after 30-min wait
+    # and still got NULL — in that case we fall back to original FrontImage.
+    _topaz_flag = row.get("IsTopazImageProcess")
+    use_topaz   = (_topaz_flag == 1 or _topaz_flag is True)
     def _img(topaz_col, orig_col):
         if use_topaz:
             v = (row.get(topaz_col) or "").strip()
@@ -3041,7 +3021,7 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
 
     cur.execute(f"""
         SELECT {top}
-            o.OrderID, o.SKU, o.ItemType, o.Quantity,
+            o.OrderID, o.SKU, o.ItemType, o.Quantity, o.DateAdd,
             d.idCustomOrderDetails, d.PrintLocation,
             d.FrontText, d.FrontFonts, d.FrontColours,
             d.FrontImage, d.FrontImageJSON, d.FrontPreviewImage,
@@ -3192,7 +3172,7 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
     log("=" * 60)
     log(f"Varsany Batch Processor  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log(f"Resolution : {DPI} DPI  ({PX_PER_CM:.2f} px/cm)")
-    log(f"Images     : {len(IMAGE_INDEX):,} files indexed")
+    log(f"Images     : downloaded on-demand from {IMAGE_SERVER_URL}")
     log(f"Fonts      : {list(FONT_INDEX.keys())}")
     if dry_run:
         log("MODE       : DRY RUN — no files written")
@@ -3253,6 +3233,69 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
             log(f"  Skipping {order_id} — Emb & Rhine (manual process)", "INFO")
             skip_count += 1
             continue
+
+        # ── Topaz / image-readiness check ────────────────────────────────────
+        # Determine whether this order has any image zones at all
+        _has_image = any(
+            (r.get("FrontImage") or "").strip() or
+            (r.get("BackImage")  or "").strip() or
+            (r.get("PocketImage") or "").strip() or
+            (r.get("SleeveImage") or "").strip()
+            for r in group_rows
+        )
+        _topaz_flag = first_row.get("IsTopazImageProcess")
+
+        if _has_image and _topaz_flag is None:
+            # Image order but Topaz has not yet processed it (IsTopazImageProcess=NULL).
+            # Option C: wait 30 mins, then re-check DB.
+            #   → If Topaz flipped to 1  → use FrontTopazImage (best quality)
+            #   → If still NULL after 30m → fall back to original FrontImage
+            date_add = first_row.get("DateAdd")
+            age_mins = None
+            if date_add:
+                try:
+                    age_mins = (datetime.utcnow() - date_add).total_seconds() / 60
+                except Exception:
+                    age_mins = None
+
+            if age_mins is not None and age_mins < 30:
+                log(f"  Deferring {order_id} — image order, Topaz pending, "
+                    f"only {age_mins:.0f} min old (need 30)", "INFO")
+                skip_count += 1
+                continue
+
+            # Order is ≥ 30 mins old — re-query DB to get the latest IsTopazImageProcess
+            try:
+                _recheck_conn = get_db()
+                _rc = _recheck_conn.cursor()
+                _rc.execute(
+                    "SELECT IsTopazImageProcess, FrontTopazImage, BackTopazImage, "
+                    "PocketTopazImage, SleeveTopazImage "
+                    "FROM tblCustomOrderDetails "
+                    "WHERE idCustomOrderDetails = ?",
+                    first_row.get("idCustomOrderDetails")
+                )
+                _fresh = _rc.fetchone()
+                _recheck_conn.close()
+                if _fresh:
+                    _fresh_topaz_flag = _fresh[0]
+                    if _fresh_topaz_flag == 1 or _fresh_topaz_flag is True:
+                        # Topaz is now done — update all rows in this group with fresh Topaz data
+                        log(f"  Topaz now ready for {order_id} — using Topaz images", "INFO")
+                        for r in group_rows:
+                            r["IsTopazImageProcess"] = 1
+                            r["FrontTopazImage"]  = _fresh[1] or r.get("FrontTopazImage")
+                            r["BackTopazImage"]   = _fresh[2] or r.get("BackTopazImage")
+                            r["PocketTopazImage"] = _fresh[3] or r.get("PocketTopazImage")
+                            r["SleeveTopazImage"] = _fresh[4] or r.get("SleeveTopazImage")
+                    else:
+                        # Still NULL after 30 mins — Topaz failed/slow.
+                        # Process silently with original FrontImage (use_topaz stays False in build_zones)
+                        pass
+            except Exception:
+                pass  # DB re-check failed — process with original FrontImage silently
+        # Text-only orders (NULL + no image) and Topaz=1 orders fall through to normal processing
+
         if is_multi:
             folder_type = "Automated"
         elif is_kids_hood:
