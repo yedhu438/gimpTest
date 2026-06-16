@@ -73,7 +73,7 @@ try:
 except ImportError:
     PS_BRIDGE_AVAILABLE = False
 
-def _build_psd_via_photoshop(order_id, row, out_path):
+def _build_psd_via_photoshop(order_id, row, out_path, force_bg_remove=False):
     """Route one order through Headless Photoshop (ps_worker.jsx).
     Returns (success: bool, message: str) — same contract as build_psd_for_order.
     """
@@ -112,6 +112,13 @@ def _build_psd_via_photoshop(order_id, row, out_path):
         "sleeve": ("SleeveText", "SleeveFonts", "SleeveColours", "SleeveImage", "SleevePreviewImage", "SleeveTopazImage"),
     }
     product_canvas = PRODUCT_CANVAS.get(product, PRODUCT_CANVAS["default"])
+    garment_rgb    = get_garment_rgb(sku)
+    bg_flag_cols   = {
+        "front":  "IsFrontBgRemove",
+        "back":   "IsBackBgRemove",
+        "pocket": "IsPocketBgRemove",
+        "sleeve": "IsSleeveBgRemove",
+    }
     zones = {}
     for zone_name, (txt_col, font_col, col_col, img_col, prev_col, topaz_col) in zone_map.items():
         text_raw = (row.get(txt_col) or "").strip()
@@ -125,10 +132,31 @@ def _build_psd_via_photoshop(order_id, row, out_path):
             continue
         font_name = parse_font(row.get(font_col) or "")
         zone_w, zone_h = product_canvas.get(zone_name, product_canvas.get("front", (9600, 9600)))
+
+        # Background removal: apply before handing the image to Photoshop.
+        # Triggered by force_bg_remove (CLI flag), designer DB flag, or auto-detection.
+        img_path = find_image(img_raw) if img_raw else None
+        if img_path and garment_rgb:
+            db_flag = bool(row.get(bg_flag_cols.get(zone_name, ""), False))
+            should_remove = force_bg_remove or db_flag
+            try:
+                from PIL import Image as _PILImage
+                _src = _PILImage.open(img_path).convert("RGBA")
+                if not should_remove:
+                    should_remove = image_bg_matches_garment(_src, garment_rgb)
+                if should_remove:
+                    _cleaned  = remove_background_colourkey(_src, garment_rgb)
+                    _out_path = img_path.rsplit(".", 1)[0] + "_bgremoved.png"
+                    _cleaned.save(_out_path, "PNG")
+                    img_path  = _out_path
+                    log(f"  bg-remove ({'forced' if (force_bg_remove or db_flag) else 'auto'}) [{zone_name}]: {garment_rgb}", "INFO")
+            except Exception as _e:
+                log(f"  bg-remove failed [{zone_name}]: {_e}", "WARN")
+
         # Derive Photoshop font fields — UXP batchPlay uses these to set the font
         # PS name = remove spaces e.g. "Arial Bold" → "ArialBold" (Photoshop matches by family+style)
         zones[zone_name] = {
-            "customer_image": str(find_image(img_raw)) if img_raw else None,
+            "customer_image": img_path,
             "text_lines":     parse_texts(text_raw) if text_raw else [],
             "font_name":      font_name,
             "font_ps_name":   font_name.replace(" ", ""),   # attempt PostScript name
@@ -1107,16 +1135,19 @@ def write_psd(out_path, canvas_w, canvas_h, layers):
 
 # ─── LAYER BUILDERS ───────────────────────────────────────────────────────────
 
-def build_image_layer(img_path, w, h, sku=None, no_bg_remove=False):
+def build_image_layer(img_path, w, h, sku=None, no_bg_remove=False, force_bg_remove=False):
     if not img_path or not os.path.isfile(img_path):
         return Image.new("RGBA", (1, 1), (0, 0, 0, 0)), 0, 0
     src = Image.open(img_path).convert("RGBA")
 
-    # Auto background removal: if image background matches garment colour, remove it
+    # Auto background removal: if image background matches garment colour, remove it.
+    # force_bg_remove=True (designer set IsFrontBgRemove=1) bypasses the edge-detection
+    # gate — we trust the designer's explicit flag over the auto-detection heuristic.
     garment_rgb = get_garment_rgb(sku) if sku else None
-    if not no_bg_remove and garment_rgb and image_bg_matches_garment(src, garment_rgb):
-        log(f"  Auto bg-remove: background matches garment colour {garment_rgb}", "INFO")
-        src = remove_background(src, garment_rgb=garment_rgb)
+    if not no_bg_remove and garment_rgb:
+        if force_bg_remove or image_bg_matches_garment(src, garment_rgb):
+            log(f"  bg-remove ({'forced' if force_bg_remove else 'auto'}): garment colour {garment_rgb}", "INFO")
+            src = remove_background(src, garment_rgb=garment_rgb)
 
     # Alpha threshold — remove near-transparent noise pixels
     r, g, b, a = src.split()
@@ -2318,12 +2349,11 @@ GARMENT_RGB = {
 def get_garment_rgb(sku):
     if not sku:
         return None
-    parts = sku.split("_")
-    if len(parts) < 2:
-        return None
-    last = parts[-1]
+    # Search the full SKU string for a colour code — longest match wins.
+    # Handles both "MenTee_BlkS" (starts-with) and "VestBlkS" (embedded).
+    sku_upper = sku  # codes are mixed-case, match case-sensitively
     for code in sorted(GARMENT_RGB.keys(), key=len, reverse=True):
-        if last.startswith(code):
+        if code in sku_upper:
             return GARMENT_RGB[code]
     return None
 
@@ -2470,20 +2500,28 @@ def build_zones(row, product):
 
     sku = row.get("SKU") or ""
 
+    bg_remove_flags = {
+        "front":  bool(row.get("IsFrontBgRemove")),
+        "back":   bool(row.get("IsBackBgRemove")),
+        "pocket": bool(row.get("IsPocketBgRemove")),
+        "sleeve": bool(row.get("IsSleeveBgRemove")),
+    }
+
     def make_zone(label, zone_key, img_filename=None, text_lines=None, font=None, colour=None):
         w, h = get_dims(product, zone_key)
         return {
-            "label":        label,
-            "zone_key":     zone_key,
-            "w":            w,
-            "h":            h,
-            "img_path":     find_image(img_filename) if img_filename else None,
-            "img_filename": img_filename or "",
-            "text_lines":   text_lines or [],
-            "font":         font   or "",
-            "colour":       colour or "#ffffff",
-            "preview_url":  preview_map.get(zone_key, ""),
-            "sku":          sku,
+            "label":            label,
+            "zone_key":         zone_key,
+            "w":                w,
+            "h":                h,
+            "img_path":         find_image(img_filename) if img_filename else None,
+            "img_filename":     img_filename or "",
+            "text_lines":       text_lines or [],
+            "font":             font   or "",
+            "colour":           colour or "#ffffff",
+            "preview_url":      preview_map.get(zone_key, ""),
+            "sku":              sku,
+            "force_bg_remove":  bg_remove_flags.get(zone_key, False),
         }
 
     zones = []
@@ -2564,7 +2602,7 @@ def build_zones(row, product):
 
 # ─── PSD BUILDER ──────────────────────────────────────────────────────────────
 
-def build_psd_for_order(order_id, row, out_path, no_bg_remove=False):
+def build_psd_for_order(order_id, row, out_path, no_bg_remove=False, force_bg_remove=False):
     sku      = row.get("SKU") or ""
     product  = detect_product(sku)
     zones    = build_zones(row, product)
@@ -2590,7 +2628,7 @@ def build_psd_for_order(order_id, row, out_path, no_bg_remove=False):
         zw, zh = zone["w"], zone["h"]
         zone["_img"] = zone["_it"] = zone["_il"] = None
         if zone["img_path"]:
-            zone["_img"], zone["_it"], zone["_il"] = build_image_layer(zone["img_path"], zw, zh, sku=sku, no_bg_remove=no_bg_remove)
+            zone["_img"], zone["_it"], zone["_il"] = build_image_layer(zone["img_path"], zw, zh, sku=sku, no_bg_remove=no_bg_remove, force_bg_remove=force_bg_remove or zone.get("force_bg_remove", False))
         elif zone["img_filename"]:
             log(f"    WARNING image not found: {zone['img_filename']}", "WARN")
 
@@ -2768,7 +2806,7 @@ def rows_have_same_design(rows):
     return all(sig(r) == first for r in rows)
 
 
-def build_merged_psd_for_order_group(order_id, rows, out_path, no_bg_remove=False):
+def build_merged_psd_for_order_group(order_id, rows, out_path, no_bg_remove=False, force_bg_remove=False):
     """
     Builds one merged PSD for an order that has multiple items (rows).
 
@@ -2816,7 +2854,7 @@ def build_merged_psd_for_order_group(order_id, rows, out_path, no_bg_remove=Fals
 
             z["_img"] = z["_it"] = z["_il"] = None
             if z["img_path"]:
-                z["_img"], z["_it"], z["_il"] = build_image_layer(z["img_path"], draw_w, zh, sku=z.get("sku"), no_bg_remove=no_bg_remove)
+                z["_img"], z["_it"], z["_il"] = build_image_layer(z["img_path"], draw_w, zh, sku=z.get("sku"), no_bg_remove=no_bg_remove, force_bg_remove=force_bg_remove or z.get("force_bg_remove", False))
             elif z["img_filename"]:
                 log(f"    WARNING image not found: {z['img_filename']}", "WARN")
 
@@ -2962,8 +3000,9 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
     if reprocess:
         where = "1=1"   # skip all filters when reprocessing
     else:
-        where = ("(d.IsDesignComplete = 0 OR d.IsDesignComplete IS NULL)"
-                 " AND (d.Topaz_Processed = 0 OR d.Topaz_Processed IS NULL)")
+        where = ("d.IsDesignComplete IS NULL"
+                 " AND (d.Topaz_Processed = 0 OR d.Topaz_Processed IS NULL)"
+                 " AND o.DateAdd >= '2026-06-16'")
     if order_id_filter:
         if isinstance(order_id_filter, list):
             # Flatten any comma-separated values in the list
@@ -3044,9 +3083,7 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
     return rows
 
 def mark_processed(detail_id):
-    """Mark a single order detail row as processed by the automation.
-    Only writes to Topaz_Processed — no other column is touched.
-    """
+    """Mark a single order detail row as processed by the automation."""
     conn = get_db()
     conn.cursor().execute("""
         UPDATE tblCustomOrderDetails
@@ -3168,7 +3205,7 @@ def _get_psd_split_paths(base_path):
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
-def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, multizone=False, reprocess=False, date_filter=None, date_after=None, upload_gdrive=False, upload_nas=False, no_bg_remove=False, output_folder=None, font_filter=None, hours=None, with_images=False):
+def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, multizone=False, reprocess=False, date_filter=None, date_after=None, upload_gdrive=False, upload_nas=False, no_bg_remove=False, force_bg_remove=False, output_folder=None, font_filter=None, hours=None, with_images=False):
     log("=" * 60)
     log(f"Varsany Batch Processor  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log(f"Resolution : {DPI} DPI  ({PX_PER_CM:.2f} px/cm)")
@@ -3342,12 +3379,12 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
             ok = False
             msg = ""
             if _USE_PS_BRIDGE:
-                ok, msg = _build_psd_via_photoshop(order_id, first_row, out_path)
+                ok, msg = _build_psd_via_photoshop(order_id, first_row, out_path, force_bg_remove=force_bg_remove)
                 if not ok:
                     log(f"  UXP Bridge FAILED: {msg} - falling back to Python engine", "WARN")
 
             if not ok:
-                ok, msg = build_merged_psd_for_order_group(order_id, group_rows, out_path, no_bg_remove=no_bg_remove)
+                ok, msg = build_merged_psd_for_order_group(order_id, group_rows, out_path, no_bg_remove=no_bg_remove, force_bg_remove=force_bg_remove)
 
             if ok:
                 log(f"  OK  {msg}", "OK")
@@ -3389,7 +3426,8 @@ if __name__ == "__main__":
     parser.add_argument("--date-after",  type=str, default=None, help="Export orders placed after a date e.g. 2026-04-10")
     parser.add_argument("--gdrive",        action="store_true",    help="Upload finished PSDs to Google Drive after export")
     parser.add_argument("--nas",           action="store_true",    help="Upload finished PSDs to Synology NAS after export")
-    parser.add_argument("--no-bg-remove",  action="store_true",    help="Skip background removal for all zones")
+    parser.add_argument("--no-bg-remove",    action="store_true",    help="Skip background removal for all zones")
+    parser.add_argument("--force-bg-remove", action="store_true",    help="Force background removal for all zones, bypassing auto-detection")
     parser.add_argument("--output",        type=str, default=None, help="Override output folder e.g. C:\\Varsany\\Output\\test1")
     parser.add_argument("--font-filter",   type=str, default=None, help="Comma-separated font name substrings e.g. 'Mermaid Font,Block Font'")
     parser.add_argument("--hours",         type=int, default=None, help="Only process orders added in the last N hours e.g. --hours 2")
@@ -3411,6 +3449,7 @@ if __name__ == "__main__":
         upload_gdrive  = args.gdrive,
         upload_nas     = args.nas,
         no_bg_remove   = args.no_bg_remove,
+        force_bg_remove= args.force_bg_remove,
         output_folder  = args.output,
         font_filter    = args.font_filter,
         hours          = args.hours,
