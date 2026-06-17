@@ -20,25 +20,11 @@ except ImportError:
     pass
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
-_DATA_PATH_FILE = Path(r"C:\Varsany\uxp-plugin\data_path.txt")
-
-def _resolve_bridge_root() -> Path:
-    # Prefer explicit env override
-    if os.environ.get("PS_BRIDGE_DIR"):
-        return Path(os.environ["PS_BRIDGE_DIR"])
-    # Read path written by the UXP plugin on startup
-    if _DATA_PATH_FILE.exists():
-        p = _DATA_PATH_FILE.read_text(encoding="utf-8").strip()
-        if p:
-            return Path(p)
-    # Fallback
-    return Path(r"C:\Varsany\photoshop_bridge")
-
-_BRIDGE_ROOT     = _resolve_bridge_root()
+_BRIDGE_ROOT     = Path(r"C:\gimpTest")
 JOBS_DIR         = _BRIDGE_ROOT / "jobs"
 ASSETS_DIR       = _BRIDGE_ROOT / "Temp" / "OrderImages"   # UXP getImageEntry looks here
-DONE_DIR         = _BRIDGE_ROOT / "done"
-ERROR_DIR        = _BRIDGE_ROOT / "error"
+DONE_DIR         = _BRIDGE_ROOT / "done"    # UXP writes done files here (bridge root, not jobs/)
+ERROR_DIR        = _BRIDGE_ROOT / "error"   # UXP writes error files here
 IMAGE_SERVER_URL = os.environ.get("IMAGE_SERVER_URL", "http://www.crssoft.co.uk/CustomOrderImages/")
 
 for _d in (JOBS_DIR, ASSETS_DIR, DONE_DIR, ERROR_DIR):
