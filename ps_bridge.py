@@ -34,7 +34,7 @@ JSX_PATH = str(Path(__file__).parent / "ps_worker.jsx")
 
 # ── Submit job ─────────────────────────────────────────────────────────────────
 def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, canvas_h_px=3780, combined=True,
-               job_type="standard", text_replacements=None, colour_hex=None, quantity=1):
+               job_type="standard", text_replacements=None, colour_hex=None, quantity=1, items=None):
     """
     Write a job JSON for Photoshop UXP plugin to pick up.
     zones = {
@@ -132,6 +132,7 @@ def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, ca
         "text_replacements": text_replacements or {},  # {"Player": "Superfine", "08": "02"}
         "colour_hex":        colour_hex or "#ffffff",   # global text colour for semi_custom
         "quantity":          max(1, int(quantity or 1)),  # number of copies to stack vertically
+        "items":             items or [],               # multi-item semi-custom [{text_replacements, colour_hex, label}, ...]
         "submitted_at":      datetime.now().isoformat(),
     }
 

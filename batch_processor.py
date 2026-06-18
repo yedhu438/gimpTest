@@ -2525,12 +2525,14 @@ def build_label_layer(label_text):
 
 # ─── SEMI-CUSTOM PSD BUILDER ──────────────────────────────────────────────────
 
-def _build_psd_semi_custom(order_id, row, out_path):
+def _build_psd_semi_custom(order_id, rows, out_path):
     """
-    Process a semi-customised order (e.g. football jerseys).
-    Opens the product's template PSD and replaces two named text layers:
+    Process one or more semi-customised rows (e.g. football jerseys).
+    Opens the product's template PSD and replaces named text layers per item:
         "Player"  →  customer name   (from FrontText / FrontTextJSON.Text1)
         "08"      →  jersey number   (from FrontTextJSON.Text2, padded to 2 digits)
+    When multiple rows are passed (multi-name orders) all items are stacked
+    vertically on a single canvas by the UXP plugin.
     Returns (success: bool, message: str).
     """
     if not PS_BRIDGE_AVAILABLE:
@@ -2538,7 +2540,12 @@ def _build_psd_semi_custom(order_id, row, out_path):
     if not _ps_alive():
         return False, "Photoshop not running — cannot process semi-custom order"
 
-    sku = (row.get("SKU") or "").strip()
+    if not rows:
+        return False, "No rows supplied to _build_psd_semi_custom"
+
+    # Use first row to resolve template — all rows in a group share the same product
+    first_row = rows[0]
+    sku = (first_row.get("SKU") or "").strip()
 
     # Resolve template PSD
     template_name = get_semi_custom_template(sku)
@@ -2548,41 +2555,53 @@ def _build_psd_semi_custom(order_id, row, out_path):
     if not os.path.isfile(template_path):
         return False, f"Template file not found: {template_path}"
 
-    # ── Extract player name ────────────────────────────────────────────────────
-    player_name = (row.get("FrontText") or "").strip()
+    # ── Build items list — one entry per row ──────────────────────────────────
+    items = []
+    for row in rows:
+        player_name = (row.get("FrontText") or "").strip()
 
-    # Try FrontTextJSON first — it's more reliable for multi-field orders
-    front_text_json_raw = (row.get("FrontTextJSON") or "").strip()
-    jersey_number_raw   = ""
-    if front_text_json_raw:
-        try:
-            import json as _json
-            ftj = _json.loads(front_text_json_raw)
-            if ftj.get("Text1"):
-                player_name = str(ftj["Text1"]).strip()
-            if ftj.get("Text2"):
-                jersey_number_raw = str(ftj["Text2"]).strip()
-        except Exception:
-            pass  # malformed JSON — fall back to FrontText
+        # Try FrontTextJSON first — more reliable for multi-field orders
+        front_text_json_raw = (row.get("FrontTextJSON") or "").strip()
+        jersey_number_raw   = ""
+        if front_text_json_raw:
+            try:
+                import json as _json
+                ftj = _json.loads(front_text_json_raw)
+                if ftj.get("Text1"):
+                    player_name = str(ftj["Text1"]).strip()
+                if ftj.get("Text2"):
+                    jersey_number_raw = str(ftj["Text2"]).strip()
+            except Exception:
+                pass  # malformed JSON — fall back to FrontText
 
-    if not player_name:
-        return False, "Player name is empty — cannot process semi-custom order"
+        if not player_name:
+            log(f"  [semi-custom] Skipping row — player name empty (SKU: {row.get('SKU')})", "WARN")
+            continue
 
-    jersey_number = format_jersey_number(jersey_number_raw) if jersey_number_raw else "00"
+        jersey_number = format_jersey_number(jersey_number_raw) if jersey_number_raw else "00"
 
-    # ── Colour (use customer colour or white default) ──────────────────────────
-    colour_hex = "#ffffff"
-    front_colours_raw = (row.get("FrontColours") or "").strip()
-    if front_colours_raw:
-        try:
-            import json as _json
-            fc = _json.loads(front_colours_raw)
-            colour_hex = fc.get("Colour1", "#ffffff")
-        except Exception:
-            pass
+        # Colour (customer's chosen colour, or white default)
+        colour_hex = "#ffffff"
+        front_colours_raw = (row.get("FrontColours") or "").strip()
+        if front_colours_raw:
+            try:
+                import json as _json
+                fc = _json.loads(front_colours_raw)
+                colour_hex = fc.get("Colour1", "#ffffff")
+            except Exception:
+                pass
 
-    log(f"  [semi-custom] {sku}  name='{player_name}'  number='{jersey_number}'  colour={colour_hex}", "INFO")
-    log(f"  [semi-custom] template: {template_name}", "INFO")
+        log(f"  [semi-custom] item: name='{player_name}'  number='{jersey_number}'  colour={colour_hex}", "INFO")
+        items.append({
+            "text_replacements": {"Player": player_name, "08": jersey_number},
+            "colour_hex":        colour_hex,
+            "label":             player_name,   # used for layer naming in the PSD
+        })
+
+    if not items:
+        return False, "No valid items extracted — all rows had empty player names"
+
+    log(f"  [semi-custom] {len(items)} item(s) | template: {template_name}", "INFO")
 
     # ── Submit job to PS bridge ────────────────────────────────────────────────
     try:
@@ -2592,17 +2611,16 @@ def _build_psd_semi_custom(order_id, row, out_path):
             template_path     = template_path,
             zones             = {},            # no zone images for semi-custom
             output_path       = out_path,
-            combined          = False,         # do NOT stack zones — template is already fully designed
+            combined          = False,         # UXP handles stacking via items[]
             job_type          = "semi_custom",
-            text_replacements = {
-                "Player": player_name,
-                "08":     jersey_number,
-            },
-            colour_hex        = colour_hex,
+            text_replacements = items[0]["text_replacements"],  # fallback for single-item path
+            colour_hex        = items[0]["colour_hex"],
+            items             = items,         # full list — UXP stacks when len > 1
         )
-        success = wait_for_completion(order_id, timeout_sec=120)
+        timeout = 120 * max(1, len(items))     # 2 min per item
+        success = wait_for_completion(order_id, timeout_sec=timeout)
         if success:
-            return True, f"-> {os.path.basename(out_path)}"
+            return True, f"-> {os.path.basename(out_path)}  ({len(items)} item(s))"
         else:
             return False, "Photoshop job timed out or errored"
     except Exception as e:
@@ -3523,7 +3541,9 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
 
             # ── Semi-custom: template text replacement ────────────────────────
             if is_semi_custom:
-                ok, msg = _build_psd_semi_custom(order_id, first_row, out_path)
+                # Pass ALL rows so multi-name orders (e.g. 4 football jerseys)
+                # are stacked onto one canvas instead of only processing row 1.
+                ok, msg = _build_psd_semi_custom(order_id, group_rows, out_path)
                 if not ok:
                     log(f"  Semi-custom FAILED: {msg}", "FAIL")
 

@@ -24,7 +24,7 @@ const {app,core,action,constants} = require("photoshop");
 const uxp = require("uxp");
 const fs  = uxp.storage.localFileSystem;
 
-const PLUGIN_VERSION = "v3.5-preview-fix";
+const PLUGIN_VERSION = "v3.6-multi-item-stack";
 const POLL_MS   = 3000;
 const LABEL_PX  = 126;  // 1cm at 320dpi (halved from 2cm)
 const GAP_PX    = 126;  // 1cm gap between zones
@@ -350,48 +350,112 @@ async function processJob(jobEntry){
 
       const {w:docW, h:docH, res} = await getDocSize();
 
-      // ── SEMI-CUSTOM: replace named text layers, no canvas changes ─────────────
+      // ── SEMI-CUSTOM: replace named text layers; stack vertically when multiple items ─
       if(job.type === "semi_custom"){
-        const replacements = job.text_replacements || {};
+        // Normalise: both single-item (job.text_replacements) and multi-item (job.items) formats
+        const items = (job.items && job.items.length > 0)
+          ? job.items
+          : [{text_replacements: job.text_replacements || {}, colour_hex: job.colour_hex || null, label: ""}];
 
-        // Recursive search through all layers and groups
-        function findLayerByName(layers, name){
-          for(let i=0; i<layers.length; i++){
-            if(layers[i].name === name) return layers[i];
-            if(layers[i].layers && layers[i].layers.length > 0){
-              const found = findLayerByName(layers[i].layers, name);
-              if(found) return found;
-            }
+        // Apply text replacements to the ACTIVE document
+        // Set text content only — existing font/size/colour/layer effects are preserved
+        async function applySemiCustomText(replacements){
+          for(const [layerName, newText] of Object.entries(replacements)){
+            if(!newText && newText !== "0"){ log("Semi-custom: skipping empty '"+layerName+"'"); continue; }
+            try{
+              await bp([{_obj:"set",_target:[{_ref:"layer",_name:layerName}],to:{_obj:"textLayer",textKey:newText}}]);
+              log("  '"+layerName+"' -> '"+newText+"'");
+            }catch(e){ log("  Failed '"+layerName+"': "+e.message, true); }
           }
-          return null;
         }
 
-        for(const [layerName, newText] of Object.entries(replacements)){
-          if(!newText && newText !== "0"){ log("Semi-custom: skipping empty value for '"+layerName+"'"); continue; }
-          const layer = findLayerByName(doc.layers, layerName);
-          if(!layer){ log("Semi-custom: layer not found: '"+layerName+"'", true); continue; }
-          if(layer.kind !== "text"){ log("Semi-custom: '"+layerName+"' is not a text layer (kind="+layer.kind+")", true); continue; }
+        if(items.length === 1){
+          // ── Single item: original behaviour — edit in place, save, done ──────────
+          await applySemiCustomText(items[0].text_replacements || {});
+          const outToken = fs.createSessionToken(outEntry);
+          log("Saving semi-custom: "+outEntry.nativePath);
+          await bp([{_obj:"save",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"document"}]},
+            in:{_path:outToken,_kind:"local"},as:{_obj:"photoshop35Format",embedProfiles:true}}]);
+          log("Saved: "+outEntry.name);
+          await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
+          doc=null; success=true;
 
-          // Set text content only — no textStyleRange so existing font/colour/size is preserved
-          // Layer effects (Stroke, Gradient Overlay) are always preserved as they live on the layer, not the text
-          try{
-            await bp([{
-              _obj: "set",
-              _target: [{_ref: "layer", _name: layerName}],
-              to: {_obj: "textLayer", textKey: newText}
-            }]);
-            log("Semi-custom: '"+layerName+"' -> '"+newText+"'");
-          }catch(e){ log("Semi-custom: failed to set '"+layerName+"': "+e.message, true); }
+        } else {
+          // ── Multi-item: stack N copies of the template onto one combined canvas ────
+          // Each item opens the template fresh, replaces its own text, copy-merges into
+          // the combined canvas at the correct Y offset.  Clipboard (copyMerged/paste)
+          // preserves layer effects (Stroke, Gradient Overlay) and transparency.
+          const GAP_PX = 126;  // 1 cm gap between items at 320 dpi
+
+          // Template dimensions come from the doc already opened above
+          const {w:tplW, h:tplH} = await getDocSize();
+          log("Multi-item semi-custom: "+items.length+" items  template="+tplW+"x"+tplH+"px");
+
+          // Close the initially-opened template — we re-open it fresh for each item
+          await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
+          doc = null;
+
+          // Create blank combined canvas: transparent CMYK 320 dpi
+          const combinedH = tplH * items.length + GAP_PX * (items.length - 1);
+          await bp([{_obj:"make",new:{_obj:"document",artboard:false,autoPromoteBackgroundLayer:false,
+            preset:"Custom",width:{_unit:"pixelsUnit",_value:tplW},height:{_unit:"pixelsUnit",_value:combinedH},
+            resolution:{_unit:"densityUnit",_value:320},pixelScaleFactor:1,mode:{_class:"CMYKColorMode"},
+            fill:{_enum:"fill",_value:"transparent"},depth:8,profile:"U.S. Web Coated (SWOP) v2"}}]);
+          doc = app.activeDocument;
+          const combinedDocId = doc.id;
+          log("Combined canvas: "+tplW+"x"+combinedH+"px for "+items.length+" items");
+
+          for(let itemIdx = 0; itemIdx < items.length; itemIdx++){
+            const item = items[itemIdx];
+            log("Item "+(itemIdx+1)+"/"+items.length+(item.label?" ("+item.label+")":""));
+
+            // Open a fresh copy of the template for this item
+            const itemTplToken = fs.createSessionToken(tplEntry);
+            await bp([{_obj:"open",null:{_path:itemTplToken,_kind:"local"},_options:{dialogOptions:"dontDisplay"}}]);
+
+            // Replace this item's text layers
+            await applySemiCustomText(item.text_replacements || {});
+
+            // Select all pixels and copy merged (includes all visible layers + effects)
+            await bp([{_obj:"set",_target:[{_ref:"channel",_property:"selection"}],to:{_obj:"whole"}}]);
+            await bp([{_obj:"copyMerged"}]);
+            log("  Copied");
+
+            // Close template — Photoshop reverts focus to previous doc (combined canvas)
+            await app.activeDocument.close(constants.SaveOptions.DONOTSAVECHANGES);
+
+            // Explicitly reactivate combined canvas in case Photoshop switched elsewhere
+            await bp([{_obj:"select",_target:[{_ref:"document",_id:combinedDocId}]}]);
+
+            // Paste → creates a new layer centred on the canvas
+            await bp([{_obj:"paste"}]);
+
+            // Move top edge to: itemIdx × (tplH + GAP_PX)
+            const targetY = itemIdx * (tplH + GAP_PX);
+            const bounds  = await getLayerBounds();
+            await moveLayerToY(bounds.top, targetY);
+
+            // Left-align (X = 0)
+            await bp([{_obj:"align",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
+              using:{_enum:"alignDistributeSelector",_value:"ADSLefts"},alignToCanvas:true}]);
+
+            // Name layer so the printing team can identify each item
+            const lName = item.label ? "Item_"+(itemIdx+1)+"_"+item.label : "Item_"+(itemIdx+1);
+            await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
+              to:{_obj:"layer",name:lName}}]);
+
+            log("  Placed at y="+targetY);
+          }
+
+          // Save the combined canvas
+          const outToken = fs.createSessionToken(outEntry);
+          log("Saving multi-item combined: "+outEntry.nativePath);
+          await bp([{_obj:"save",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"document"}]},
+            in:{_path:outToken,_kind:"local"},as:{_obj:"photoshop35Format",embedProfiles:true}}]);
+          log("Saved: "+outEntry.name);
+          await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
+          doc=null; success=true;
         }
-
-        // Save with original canvas size — no resize, no label strip
-        const outToken = fs.createSessionToken(outEntry);
-        log("Saving semi-custom: "+outEntry.nativePath);
-        await bp([{_obj:"save", null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"document"}]},
-          in:{_path:outToken,_kind:"local"}, as:{_obj:"photoshop35Format",embedProfiles:true}}]);
-        log("Saved: "+outEntry.name);
-        await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
-        doc=null; success=true;
 
       } else {
       // ── STANDARD: zone processing ─────────────────────────────────────────────
