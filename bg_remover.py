@@ -30,9 +30,10 @@ def colour_diff(c1, c2):
 
 
 def get_garment_colour(sku):
-    suffix = sku.rsplit("_", 1)[-1] if "_" in sku else sku
-    for code, rgb in GARMENT_COLOURS.items():
-        if suffix.startswith(code):
+    # Search the full SKU for a colour code — longest match wins.
+    # Handles both "MenTee_BlkS" (suffix) and "VestBlkS" (embedded).
+    for code, rgb in sorted(GARMENT_COLOURS.items(), key=lambda x: len(x[0]), reverse=True):
+        if code in sku:
             return code, rgb
     return None, None
 

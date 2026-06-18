@@ -24,7 +24,7 @@ const {app,core,action,constants} = require("photoshop");
 const uxp = require("uxp");
 const fs  = uxp.storage.localFileSystem;
 
-const PLUGIN_VERSION = "v3.4-multiitem";
+const PLUGIN_VERSION = "v3.5-preview-fix";
 const POLL_MS   = 3000;
 const LABEL_PX  = 126;  // 1cm at 320dpi (halved from 2cm)
 const GAP_PX    = 126;  // 1cm gap between zones
@@ -177,7 +177,7 @@ async function addLabel(labelText, yTop, canvasW){
 
 // ── Process one zone: place image + text at given Y offset ────────────────────
 // Returns the bottom Y of the zone content
-async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res, alignLeft=false){
+async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res, alignLeft=false, copyIdx=0){
   let zoneBottom = yOffset;
 
   // Place image if available
@@ -238,16 +238,10 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
           const ppb2 = await getLayerBounds();
           await moveLayerToY(ppb2.top, yOffset);
         }
-        // Name it with zone key so multi-item orders don't overwrite each other
-        await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Preview_"+zone}}]);
-        // Hide — select by name then set visible false via DOM
-        const allLayers = doc.layers;
-        for(let i=0; i<allLayers.length; i++){
-          if(allLayers[i].name === "Preview_"+zone){
-            allLayers[i].visible = false;
-            break;
-          }
-        }
+        // Name preview layer uniquely per zone AND copy so quantity>1 never collides
+        await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:"Preview_"+zone+"_"+copyIdx}}]);
+        // Hide the ACTIVE layer directly — no name search needed, works for all quantities
+        await bp([{_obj:"hide",null:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]}]);
         log("Preview placed (hidden): "+zone);
       }catch(pe){log("Preview error ("+zone+"): "+pe.message,true);}
     }
@@ -356,23 +350,74 @@ async function processJob(jobEntry){
 
       const {w:docW, h:docH, res} = await getDocSize();
 
+      // ── SEMI-CUSTOM: replace named text layers, no canvas changes ─────────────
+      if(job.type === "semi_custom"){
+        const replacements = job.text_replacements || {};
+
+        // Recursive search through all layers and groups
+        function findLayerByName(layers, name){
+          for(let i=0; i<layers.length; i++){
+            if(layers[i].name === name) return layers[i];
+            if(layers[i].layers && layers[i].layers.length > 0){
+              const found = findLayerByName(layers[i].layers, name);
+              if(found) return found;
+            }
+          }
+          return null;
+        }
+
+        for(const [layerName, newText] of Object.entries(replacements)){
+          if(!newText && newText !== "0"){ log("Semi-custom: skipping empty value for '"+layerName+"'"); continue; }
+          const layer = findLayerByName(doc.layers, layerName);
+          if(!layer){ log("Semi-custom: layer not found: '"+layerName+"'", true); continue; }
+          if(layer.kind !== "text"){ log("Semi-custom: '"+layerName+"' is not a text layer (kind="+layer.kind+")", true); continue; }
+
+          // Set text content only — no textStyleRange so existing font/colour/size is preserved
+          // Layer effects (Stroke, Gradient Overlay) are always preserved as they live on the layer, not the text
+          try{
+            await bp([{
+              _obj: "set",
+              _target: [{_ref: "layer", _name: layerName}],
+              to: {_obj: "textLayer", textKey: newText}
+            }]);
+            log("Semi-custom: '"+layerName+"' -> '"+newText+"'");
+          }catch(e){ log("Semi-custom: failed to set '"+layerName+"': "+e.message, true); }
+        }
+
+        // Save with original canvas size — no resize, no label strip
+        const outToken = fs.createSessionToken(outEntry);
+        log("Saving semi-custom: "+outEntry.nativePath);
+        await bp([{_obj:"save", null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"document"}]},
+          in:{_path:outToken,_kind:"local"}, as:{_obj:"photoshop35Format",embedProfiles:true}}]);
+        log("Saved: "+outEntry.name);
+        await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
+        doc=null; success=true;
+
+      } else {
+      // ── STANDARD: zone processing ─────────────────────────────────────────────
+
       // Calculate exact canvas height needed — avoid allocating a massive 30000px canvas
-      // Formula: for each zone → LABEL_PX + zone_h_px + GAP_PX, then crop at the end
+      // Formula: (per-copy zone stack) × quantity + (quantity-1) × QTY_GAP, then crop at the end
+      const quantity    = (job.quantity && job.quantity > 1) ? Math.round(job.quantity) : 1;
+      const QTY_GAP_PX  = 126;  // 1cm gap between copies at 320dpi (for cutting)
+      const perCopyH    = isCombined
+        ? Object.values(job.zones).reduce((sum, d) => sum + LABEL_PX + (d.zone_h_px || docH) + GAP_PX, 0)
+        : docH;
       const neededH = isCombined
-        ? Object.values(job.zones).reduce((sum, d) => sum + LABEL_PX + (d.zone_h_px || docH) + GAP_PX, GAP_PX)
+        ? perCopyH * quantity + Math.max(0, quantity - 1) * QTY_GAP_PX
         : docH;  // single-zone mode uses existing template dimensions
       const targetH = Math.max(neededH, docH);  // never shrink the template
 
       if(docH < targetH){
         await app.activeDocument.resizeCanvas(docW, targetH, constants.AnchorPosition.TOPLEFT);
         const newSize = await getDocSize();
-        log("Canvas expanded: "+newSize.w+"x"+newSize.h+"px (needed "+targetH+"px)");
+        log("Canvas expanded: "+newSize.w+"x"+newSize.h+"px (needed "+targetH+"px, qty="+quantity+")");
       } else {
-        log("Canvas ok: "+docW+"x"+docH+"px");
+        log("Canvas ok: "+docW+"x"+docH+"px (qty="+quantity+")");
       }
 
       if(isCombined){
-        // ── COMBINED MODE: stack zones vertically ─────────────────────────────
+        // ── COMBINED MODE: stack zones vertically, repeated quantity times ────
         let currentY = 0;
         // Zone order: pocket first, then front, then back (by zone key prefix)
         const ZONE_ORDER = ["pocket","front","back","sleeve"];
@@ -385,25 +430,32 @@ async function processJob(jobEntry){
           return a.localeCompare(b);
         });
 
-        for(const [zone, data] of zones){
-          const isPocket = zone.startsWith("pocket");
-          // Add label
-          const labelText = (data.label || zone.toUpperCase()).toUpperCase();
-          await addLabel(labelText, currentY, docW);
-          currentY += LABEL_PX;
+        for(let copyIdx = 0; copyIdx < quantity; copyIdx++){
+          // 1cm separator line between copies (except before the first)
+          if(copyIdx > 0) currentY += QTY_GAP_PX;
+          if(quantity > 1) log("Copy "+(copyIdx+1)+"/"+quantity+" starting at y="+currentY);
 
-          // Place image + text for this zone
-          const zoneW = data.zone_w_px || docW;
-          const zoneH = data.zone_h_px || docW;
-          const zoneBottom = await processZone(doc, zone, data, imgEntries[zone], currentY, zoneW, zoneH, res, isPocket);
-          currentY = zoneBottom + GAP_PX;
+          for(const [zone, data] of zones){
+            const isPocket = zone.startsWith("pocket");
+            // Add label — append copy number when quantity > 1 so layers are identifiable
+            const baseLabel = (data.label || zone.toUpperCase()).toUpperCase();
+            const labelText = quantity > 1 ? baseLabel+" #"+(copyIdx+1) : baseLabel;
+            await addLabel(labelText, currentY, docW);
+            currentY += LABEL_PX;
 
-          log("Zone done: "+zone+" bottom at "+zoneBottom);
+            // Place image + text for this zone
+            const zoneW = data.zone_w_px || docW;
+            const zoneH = data.zone_h_px || docW;
+            const zoneBottom = await processZone(doc, zone, data, imgEntries[zone], currentY, zoneW, zoneH, res, isPocket, copyIdx);
+            currentY = zoneBottom + GAP_PX;
+
+            log("Zone done: "+zone+" (copy "+(copyIdx+1)+"/"+quantity+") bottom at "+zoneBottom);
+          }
         }
 
         // Crop canvas to actual content height using pixels directly
         const finalH = currentY - GAP_PX;
-        log("Cropping to "+finalH+"px via DOM...");
+        log("Cropping to "+finalH+"px via DOM ("+quantity+" cop"+(quantity===1?"y":"ies")+")...");
         await app.activeDocument.resizeCanvas(docW, finalH, constants.AnchorPosition.TOPLEFT);
         const newSize = await getDocSize();
         log("Canvas after crop: "+newSize.w+"x"+newSize.h+"px");
@@ -501,6 +553,8 @@ async function processJob(jobEntry){
       log("Saved: "+outEntry.name);
       await doc.close(constants.SaveOptions.DONOTSAVECHANGES);
       doc=null; success=true;
+
+      } // end else (standard zone processing)
     }catch(e){errorMsg=e.message||String(e);if(doc)try{await doc.close(constants.SaveOptions.DONOTSAVECHANGES);}catch(x){}}
   },{commandName:"Process "+orderId});
 

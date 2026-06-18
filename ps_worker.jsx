@@ -115,14 +115,29 @@ function processJob(jobFile) {
 
         doc = app.open(tpl);
 
-        var zones = job.zones;
-        for (var z in zones) {
-            if (!zones.hasOwnProperty(z)) continue;
-            var zone = zones[z];
-            log("  Zone: "+z);
-            if (zone.customer_image) placeImage(doc, zone.customer_image, "CustomerImage_"+z);
-            if (zone.text_lines && zone.text_lines.length > 0)
-                setText(doc, "CustomerText_"+z, zone.text_lines, zone.colour_hex, zone.font_name);
+        if (job.type === "semi_custom") {
+            // ── Semi-customised: replace named text layers in the template ──
+            // e.g. "Player" → customer name, "08" → jersey number (zero-padded)
+            var replacements = job.text_replacements || {};
+            var globalColour = job.colour_hex || null;
+            for (var layerName in replacements) {
+                if (!replacements.hasOwnProperty(layerName)) continue;
+                var value = replacements[layerName];
+                log("  [semi-custom] '"+layerName+"' → '"+value+"'");
+                setText(doc, layerName, [value], globalColour, null);
+                // null font = keep the template's existing font / style intact
+            }
+        } else {
+            // ── Standard: place image and text per zone ───────────────────
+            var zones = job.zones;
+            for (var z in zones) {
+                if (!zones.hasOwnProperty(z)) continue;
+                var zone = zones[z];
+                log("  Zone: "+z);
+                if (zone.customer_image) placeImage(doc, zone.customer_image, "CustomerImage_"+z);
+                if (zone.text_lines && zone.text_lines.length > 0)
+                    setText(doc, "CustomerText_"+z, zone.text_lines, zone.colour_hex, zone.font_name);
+            }
         }
 
         var out  = new File(job.output_path);

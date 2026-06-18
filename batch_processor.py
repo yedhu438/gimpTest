@@ -176,9 +176,17 @@ def _build_psd_via_photoshop(order_id, row, out_path, force_bg_remove=False):
     canvas_w = max(z["zone_w_px"] for z in zones.values())
     canvas_h = max(z["zone_h_px"] for z in zones.values())
 
+    # Quantity: UXP plugin stacks N identical copies vertically with a 1cm gap between each
+    quantity = max(1, int(row.get("Quantity") or 1))
+    if quantity > 1:
+        log(f"  Quantity={quantity} — UXP will stack {quantity} copies vertically", "INFO")
+
     _ps_submit(order_id, template_path, zones, out_path,
-               canvas_w_px=canvas_w, canvas_h_px=canvas_h, combined=True)
-    success = _ps_wait(order_id, timeout_sec=600, use_uxp=True)
+               canvas_w_px=canvas_w, canvas_h_px=canvas_h, combined=True,
+               quantity=quantity)
+    # Increase timeout for multi-copy orders (each copy takes ~same time)
+    timeout = 600 * max(1, quantity // 2) if quantity > 2 else 600
+    success = _ps_wait(order_id, timeout_sec=timeout, use_uxp=True)
     if success:
         return True, out_path
     return False, "Photoshop UXP timed out or errored"
@@ -202,6 +210,33 @@ PX_PER_CM = DPI / 2.54      # ~125.98 px/cm
 K_GAMMA   = 1.0             # K channel gamma — 1.0 = no adjustment (linear ICC conversion)
 
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# ── Semi-customised: template PSDs with named text layers ─────────────────────
+# These orders open a pre-designed template and only edit specific text layers.
+# No image placement, no blank canvas — just text substitution.
+SEMI_CUSTOM_TEMPLATE_MAP = {
+    "FootballAdultTee":      "england Football Adult.psd",
+    "FootballKidsTee":       "england Football Kids.psd",
+    "PEngFB01PoloJersy":     "england Football Adult.psd",
+    "PEngR01PoloJersy":      "england Football Adult.psd",
+    "Scotland_Football_Tee": "scotland Football Adult.psd",
+    "Scotland_FootballKids": "scotland Football Kids.psd",
+}
+
+# SEMI_CUSTOM_OUTPUT_FOLDER is built at runtime inside run_batch (uses today's date folder)
+
+
+def format_jersey_number(raw):
+    """Return jersey number exactly as customer entered it (trimmed whitespace only)."""
+    return str(raw).strip()
+
+
+def get_semi_custom_template(sku):
+    """Return template filename for a semi-custom SKU, or None if not recognised."""
+    for prefix, template in SEMI_CUSTOM_TEMPLATE_MAP.items():
+        if sku.startswith(prefix):
+            return template
+    return None
 
 # Images are downloaded on-demand from IMAGE_SERVER_URL — no local index needed.
 
@@ -2488,6 +2523,92 @@ def build_label_layer(label_text):
     ImageDraw.Draw(img).text((pad - bb[0], pad - bb[1]), label_text.upper(), font=f, fill=(0, 0, 0, 255))
     return img
 
+# ─── SEMI-CUSTOM PSD BUILDER ──────────────────────────────────────────────────
+
+def _build_psd_semi_custom(order_id, row, out_path):
+    """
+    Process a semi-customised order (e.g. football jerseys).
+    Opens the product's template PSD and replaces two named text layers:
+        "Player"  →  customer name   (from FrontText / FrontTextJSON.Text1)
+        "08"      →  jersey number   (from FrontTextJSON.Text2, padded to 2 digits)
+    Returns (success: bool, message: str).
+    """
+    if not PS_BRIDGE_AVAILABLE:
+        return False, "ps_bridge.py not found — cannot process semi-custom order"
+    if not _ps_alive():
+        return False, "Photoshop not running — cannot process semi-custom order"
+
+    sku = (row.get("SKU") or "").strip()
+
+    # Resolve template PSD
+    template_name = get_semi_custom_template(sku)
+    if not template_name:
+        return False, f"No semi-custom template mapped for SKU: {sku}"
+    template_path = os.path.join(TEMPLATES_FOLDER, template_name)
+    if not os.path.isfile(template_path):
+        return False, f"Template file not found: {template_path}"
+
+    # ── Extract player name ────────────────────────────────────────────────────
+    player_name = (row.get("FrontText") or "").strip()
+
+    # Try FrontTextJSON first — it's more reliable for multi-field orders
+    front_text_json_raw = (row.get("FrontTextJSON") or "").strip()
+    jersey_number_raw   = ""
+    if front_text_json_raw:
+        try:
+            import json as _json
+            ftj = _json.loads(front_text_json_raw)
+            if ftj.get("Text1"):
+                player_name = str(ftj["Text1"]).strip()
+            if ftj.get("Text2"):
+                jersey_number_raw = str(ftj["Text2"]).strip()
+        except Exception:
+            pass  # malformed JSON — fall back to FrontText
+
+    if not player_name:
+        return False, "Player name is empty — cannot process semi-custom order"
+
+    jersey_number = format_jersey_number(jersey_number_raw) if jersey_number_raw else "00"
+
+    # ── Colour (use customer colour or white default) ──────────────────────────
+    colour_hex = "#ffffff"
+    front_colours_raw = (row.get("FrontColours") or "").strip()
+    if front_colours_raw:
+        try:
+            import json as _json
+            fc = _json.loads(front_colours_raw)
+            colour_hex = fc.get("Colour1", "#ffffff")
+        except Exception:
+            pass
+
+    log(f"  [semi-custom] {sku}  name='{player_name}'  number='{jersey_number}'  colour={colour_hex}", "INFO")
+    log(f"  [semi-custom] template: {template_name}", "INFO")
+
+    # ── Submit job to PS bridge ────────────────────────────────────────────────
+    try:
+        from ps_bridge import submit_job, wait_for_completion
+        submit_job(
+            order_id          = order_id,
+            template_path     = template_path,
+            zones             = {},            # no zone images for semi-custom
+            output_path       = out_path,
+            combined          = False,         # do NOT stack zones — template is already fully designed
+            job_type          = "semi_custom",
+            text_replacements = {
+                "Player": player_name,
+                "08":     jersey_number,
+            },
+            colour_hex        = colour_hex,
+        )
+        success = wait_for_completion(order_id, timeout_sec=120)
+        if success:
+            return True, f"-> {os.path.basename(out_path)}"
+        else:
+            return False, "Photoshop job timed out or errored"
+    except Exception as e:
+        return False, f"Semi-custom bridge error: {e}"
+
+
 # ─── ZONE BUILDER ─────────────────────────────────────────────────────────────
 
 def build_zones(row, product):
@@ -3060,14 +3181,15 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
         SELECT {top}
             o.OrderID, o.SKU, o.ItemType, o.Quantity, o.DateAdd,
             d.idCustomOrderDetails, d.PrintLocation,
-            d.FrontText, d.FrontFonts, d.FrontColours,
+            d.FrontText, d.FrontTextJSON, d.FrontFonts, d.FrontColours,
             d.FrontImage, d.FrontImageJSON, d.FrontPreviewImage,
             d.BackText, d.BackFonts, d.BackColours,
             d.BackImage, d.BackImageJSON, d.BackPreviewImage,
             d.PocketText, d.PocketFonts, d.PocketColours,
             d.PocketImage, d.PocketImageJSON, d.PocketPreviewImage,
             d.SleeveText, d.SleeveFonts, d.SleeveColours,
-            d.SleeveImage, d.SleeveImageJSON, d.SleevePreviewImage
+            d.SleeveImage, d.SleeveImageJSON, d.SleevePreviewImage,
+            d.CustomizationCategory
             {premium_cols}
             {topaz_cols}
         FROM tblCustomOrder o
@@ -3359,30 +3481,63 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
         skus_str = " | ".join(r.get("SKU", "") for r in group_rows)
         log(f"[{i}/{total_orders}] {order_id}  ({len(group_rows)} items)  |  {skus_str}")
 
+        # ── Semi-customised detection ─────────────────────────────────────────
+        is_semi_custom = (first_row.get("CustomizationCategory") or "").strip().lower() == "semicustomized"
+
+        if is_semi_custom:
+            # Override output path → Output\<date>\semicustomized\
+            semi_custom_dir = os.path.join(out_dir, "semicustomized")
+            os.makedirs(semi_custom_dir, exist_ok=True)
+            safe_id   = order_id.replace("/", "-")
+            semi_path = os.path.join(semi_custom_dir, f"{safe_id}.psd")
+            _c = 2
+            while os.path.exists(semi_path):
+                semi_path = os.path.join(semi_custom_dir, f"{safe_id}_{_c}.psd")
+                _c += 1
+            out_path = semi_path
+
         if dry_run:
-            for row in group_rows:
-                product = detect_product(row.get("SKU") or "")
-                zones   = build_zones(row, product)
-                for z in zones:
-                    status = "FOUND" if z["img_path"] else ("MISSING" if z["img_filename"] else "text-only")
-                    log(f"  [{z['label']}]  img={z['img_filename'] or 'none'} ({status})  text={z['text_lines']}", "DRY")
-                if not zones:
-                    log("  SKIP — no zones", "DRY")
+            if is_semi_custom:
+                import json as _json
+                ftj_raw = (first_row.get("FrontTextJSON") or "").strip()
+                ftj = {}
+                try: ftj = _json.loads(ftj_raw)
+                except Exception: pass
+                log(f"  [semi-custom]  name='{ftj.get('Text1', first_row.get('FrontText',''))}'  "
+                    f"number='{format_jersey_number(ftj.get('Text2',''))}'"
+                    f"  template={get_semi_custom_template(sku_raw) or 'NONE'}", "DRY")
+            else:
+                for row in group_rows:
+                    product = detect_product(row.get("SKU") or "")
+                    zones   = build_zones(row, product)
+                    for z in zones:
+                        status = "FOUND" if z["img_path"] else ("MISSING" if z["img_filename"] else "text-only")
+                        log(f"  [{z['label']}]  img={z['img_filename'] or 'none'} ({status})  text={z['text_lines']}", "DRY")
+                    if not zones:
+                        log("  SKIP — no zones", "DRY")
             continue
 
         try:
-            # ── Engine selection ──────────────────────────────────────────────
-            # USE_PHOTOSHOP_BRIDGE=1 in .env → try Photoshop first, fall back
-            # to the Python writer if PS is not running or no template found.
             ok = False
             msg = ""
-            if _USE_PS_BRIDGE:
-                ok, msg = _build_psd_via_photoshop(order_id, first_row, out_path, force_bg_remove=force_bg_remove)
-                if not ok:
-                    log(f"  UXP Bridge FAILED: {msg} - falling back to Python engine", "WARN")
 
-            if not ok:
-                ok, msg = build_merged_psd_for_order_group(order_id, group_rows, out_path, no_bg_remove=no_bg_remove, force_bg_remove=force_bg_remove)
+            # ── Semi-custom: template text replacement ────────────────────────
+            if is_semi_custom:
+                ok, msg = _build_psd_semi_custom(order_id, first_row, out_path)
+                if not ok:
+                    log(f"  Semi-custom FAILED: {msg}", "FAIL")
+
+            else:
+                # ── Engine selection ──────────────────────────────────────────
+                # USE_PHOTOSHOP_BRIDGE=1 in .env → try Photoshop first, fall back
+                # to the Python writer if PS is not running or no template found.
+                if _USE_PS_BRIDGE:
+                    ok, msg = _build_psd_via_photoshop(order_id, first_row, out_path, force_bg_remove=force_bg_remove)
+                    if not ok:
+                        log(f"  UXP Bridge FAILED: {msg} - falling back to Python engine", "WARN")
+
+                if not ok:
+                    ok, msg = build_merged_psd_for_order_group(order_id, group_rows, out_path, no_bg_remove=no_bg_remove, force_bg_remove=force_bg_remove)
 
             if ok:
                 log(f"  OK  {msg}", "OK")

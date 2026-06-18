@@ -33,7 +33,8 @@ for _d in (JOBS_DIR, ASSETS_DIR, DONE_DIR, ERROR_DIR):
 JSX_PATH = str(Path(__file__).parent / "ps_worker.jsx")
 
 # ── Submit job ─────────────────────────────────────────────────────────────────
-def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, canvas_h_px=3780, combined=True):
+def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, canvas_h_px=3780, combined=True,
+               job_type="standard", text_replacements=None, colour_hex=None, quantity=1):
     """
     Write a job JSON for Photoshop UXP plugin to pick up.
     zones = {
@@ -119,15 +120,19 @@ def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, ca
         }
 
     job = {
-        "order_id":     order_id,
-        "template":     str(template_path),
-        "zones":        clean_zones,
-        "output_path":  str(output_path),
-        "combined":     combined,          # True = stacked layout for blank templates
-        "canvas_w_px":  canvas_w_px,
-        "canvas_h_px":  canvas_h_px,
-        "dpi":          320,
-        "submitted_at": datetime.now().isoformat(),
+        "order_id":          order_id,
+        "template":          str(template_path),
+        "zones":             clean_zones,
+        "output_path":       str(output_path),
+        "combined":          combined,          # True = stacked layout for blank templates
+        "canvas_w_px":       canvas_w_px,
+        "canvas_h_px":       canvas_h_px,
+        "dpi":               320,
+        "type":              job_type,           # "standard" | "semi_custom"
+        "text_replacements": text_replacements or {},  # {"Player": "Superfine", "08": "02"}
+        "colour_hex":        colour_hex or "#ffffff",   # global text colour for semi_custom
+        "quantity":          max(1, int(quantity or 1)),  # number of copies to stack vertically
+        "submitted_at":      datetime.now().isoformat(),
     }
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
