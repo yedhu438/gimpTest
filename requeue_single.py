@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv(r'C:\gimpTest\.env')
 import pyodbc
 
-ORDER_ID = '206-7243076-3097949'
+ORDER_ID = sys.argv[1] if len(sys.argv) > 1 else '206-7243076-3097949'
 
 conn = pyodbc.connect(
     'DRIVER={ODBC Driver 17 for SQL Server};'

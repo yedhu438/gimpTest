@@ -154,14 +154,14 @@ def _build_psd_via_photoshop(order_id, row, out_path, force_bg_remove=False):
                 log(f"  bg-remove failed [{zone_name}]: {_e}", "WARN")
 
         # Derive Photoshop font fields — UXP batchPlay uses these to set the font
-        # PS name = remove spaces e.g. "Arial Bold" → "ArialBold" (Photoshop matches by family+style)
+        _ps_name, _ps_family, _ps_style = get_ps_font(font_name)
         zones[zone_name] = {
             "customer_image": img_path,
             "text_lines":     parse_texts(text_raw) if text_raw else [],
             "font_name":      font_name,
-            "font_ps_name":   font_name.replace(" ", ""),   # attempt PostScript name
-            "font_family":    font_name,
-            "font_style":     "Regular",
+            "font_ps_name":   _ps_name,
+            "font_family":    _ps_family,
+            "font_style":     _ps_style,
             "colour_hex":     parse_colour(row.get(col_col) or ""),
             "label":          make_zone_label(zone_name, sku),
             "zone_w_px":      zone_w,
@@ -198,7 +198,8 @@ def _build_psd_via_photoshop(order_id, row, out_path, force_bg_remove=False):
 _base         = os.environ.get("VARSANY_BASE",    r"C:\Varsany")
 FONT_FOLDERS  = [os.path.join(_base, "Fonts")] + \
                 [p.strip() for p in os.environ.get("VARSANY_FONTS_EXTRA", r"W:\fonts").split(",") if p.strip()] + \
-                [r"C:\Windows\Fonts"]  # also pick up any fonts installed system-wide
+                [r"C:\Windows\Fonts",  # system-wide fonts
+                 os.path.join(os.environ.get("LOCALAPPDATA",""), r"Microsoft\Windows\Fonts")]  # per-user installed fonts
 OUTPUT_FOLDER = os.environ.get("VARSANY_OUTPUT", os.path.join(_base, "Output"))
 LOG_FILE      = os.environ.get("VARSANY_LOG",    os.path.join(_base, "batch_log.txt"))
 TEMP_FOLDER   = os.environ.get("VARSANY_TEMP",   os.path.join(_base, "Temp"))
@@ -224,6 +225,32 @@ SEMI_CUSTOM_TEMPLATE_MAP = {
 }
 
 # SEMI_CUSTOM_OUTPUT_FOLDER is built at runtime inside run_batch (uses today's date folder)
+
+# ── Slot config per template ───────────────────────────────────────────────────
+# slot_h_px  : height of one jersey/item slot in the template (pixels)
+# max_slots  : how many slots the template has (user set this up manually)
+# player_layer / number_layer : base Photoshop layer names for the text fields
+# Photoshop auto-naming when duplicating: "Player", "Player copy", "Player copy 2" ...
+SEMI_CUSTOM_SLOT_CONFIG = {
+    "england Football Adult.psd":  {"slot_h_px": 3780, "max_slots": 7, "player_layer": "Player", "number_layer": "08"},
+    "england Football Kids.psd":   {"slot_h_px": 3780, "max_slots": 7, "player_layer": "Player", "number_layer": "08"},
+    "scotland Football Adult.psd": {"slot_h_px": 3780, "max_slots": 7, "player_layer": "Player", "number_layer": "08"},
+    "scotland Football Kids.psd":  {"slot_h_px": 3780, "max_slots": 7, "player_layer": "Player", "number_layer": "08"},
+}
+
+
+def _ps_copy_layer_name(base, slot_idx):
+    """Return the Photoshop auto-copy layer name for a given 0-based slot index.
+    Slot 0 → 'Player'
+    Slot 1 → 'Player copy'
+    Slot 2 → 'Player copy 2'
+    Slot N → 'Player copy N'
+    """
+    if slot_idx == 0:
+        return base
+    if slot_idx == 1:
+        return f"{base} copy"
+    return f"{base} copy {slot_idx}"
 
 
 def format_jersey_number(raw):
@@ -264,7 +291,7 @@ FONT_ALIASES = {
     "bebasneue":        "bebasneueregular",
     "chewy":            "chewyregular",
     "fondamento":       "fondamentoregular",
-    "helvetica":        "arial",
+    # "helvetica" — install Helvetica font manually, no alias needed
     "lato":             "latoregular",
     "latobold":         "latobold",
     "permanentmarker":  "permanentmarkerregular",
@@ -341,6 +368,66 @@ FONT_ALIASES = {
 }
 
 print(f"  Fonts indexed: {list(FONT_INDEX.keys())}")
+
+# ─── PHOTOSHOP POSTSCRIPT FONT NAME MAP ──────────────────────────────────────
+# Maps normalised DB font name → (ps_name, family, style) for Photoshop UXP.
+# PS name is the exact PostScript name embedded in the font file (nameID 6).
+# Photoshop matches fonts by PostScript name — wrong name = Myriad Pro fallback.
+PS_FONT_MAP = {
+    # Standard web/system fonts
+    "arial":                ("ArialMT",               "Arial",            "Regular"),
+    "arialbold":            ("Arial-BoldMT",           "Arial",            "Bold"),
+    "helvetica":            ("Helvetica",              "Helvetica",        "Regular"),
+    "helveticabold":        ("Helvetica-Bold",         "Helvetica",        "Bold"),
+    "verdana":              ("Verdana",                "Verdana",          "Regular"),
+    "timesnewroman":        ("TimesNewRomanPSMT",      "Times New Roman",  "Regular"),
+    "georgia":              ("Georgia",                "Georgia",          "Regular"),
+    "impact":               ("Impact",                 "Impact",           "Normal"),
+    "tahoma":               ("Tahoma",                 "Tahoma",           "Regular"),
+    # Custom fonts — PostScript names read directly from font files
+    "abel":                 ("Abel-Regular",           "Abel",             "Regular"),
+    "abelregular":          ("Abel-Regular",           "Abel",             "Regular"),
+    "bebasneue":            ("BebasNeue-Regular",      "Bebas Neue",       "Regular"),
+    "bebasneueregular":     ("BebasNeue-Regular",      "Bebas Neue",       "Regular"),
+    "bebasneuefree":        ("BebasNeue-Regular",      "Bebas Neue",       "Regular"),
+    "bebasneuepro":         ("BebasNeue-Regular",      "Bebas Neue",       "Regular"),
+    "chewy":                ("Chewy-Regular",          "Chewy",            "Regular"),
+    "chewyregular":         ("Chewy-Regular",          "Chewy",            "Regular"),
+    "fondamento":           ("Fondamento-Regular",     "Fondamento",       "Regular"),
+    "fondamentoregular":    ("Fondamento-Regular",     "Fondamento",       "Regular"),
+    "lato":                 ("Lato-Regular",           "Lato",             "Regular"),
+    "latoregular":          ("Lato-Regular",           "Lato",             "Regular"),
+    "latobold":             ("Lato-Regular",           "Lato",             "Regular"),  # Bold file missing, use Regular
+    "permanentmarker":      ("PermanentMarker-Regular","Permanent Marker", "Regular"),
+    "permanentmarkerregular":("PermanentMarker-Regular","Permanent Marker","Regular"),
+    "roboto":               ("Roboto-Regular",         "Roboto",           "Regular"),
+    "robotoregular":        ("Roboto-Regular",         "Roboto",           "Regular"),
+    "russoone":             ("RussoOne-Regular",       "Russo One",        "Regular"),
+    "russooneregular":      ("RussoOne-Regular",       "Russo One",        "Regular"),
+    "ultra":                ("Ultra-Regular",          "Ultra",            "Regular"),
+    "ultraregular":         ("Ultra-Regular",          "Ultra",            "Regular"),
+    "vinylfont":            ("VinylFont-Regular",      "VinylFont",        "Regular"),
+    "vinyl":                ("VinylFont-Regular",      "VinylFont",        "Regular"),
+    "vinylFont":            ("VinylFont-Regular",      "VinylFont",        "Regular"),
+}
+
+def get_ps_font(db_font_name):
+    """Return (ps_name, family, style) for use in Photoshop UXP batchPlay.
+    Falls back to Arial if the font isn't in PS_FONT_MAP.
+    Also applies FONT_ALIASES so aliased names resolve correctly."""
+    norm = (db_font_name or "").lower().replace(" ", "").replace("-", "").replace("_", "")
+    # Apply FONT_ALIASES first (e.g. "helvetica" → "arial")
+    resolved = FONT_ALIASES.get(norm, norm)
+    if resolved and resolved in PS_FONT_MAP:
+        return PS_FONT_MAP[resolved]
+    if norm in PS_FONT_MAP:
+        return PS_FONT_MAP[norm]
+    # Try partial match against PS_FONT_MAP keys
+    for key in PS_FONT_MAP:
+        if norm.startswith(key) or key.startswith(norm):
+            return PS_FONT_MAP[key]
+    log(f"  get_ps_font: no PS name for '{db_font_name}' (norm='{norm}') — using Arial", "WARN")
+    return ("ArialMT", "Arial", "Regular")
 
 # Keys in FONT_INDEX that belong to premium texture/specialty fonts
 PREMIUM_FONT_KEYS = {
@@ -2527,27 +2614,34 @@ def build_label_layer(label_text):
 
 def _build_psd_semi_custom(order_id, rows, out_path):
     """
-    Process one or more semi-customised rows (e.g. football jerseys).
-    Opens the product's template PSD and replaces named text layers per item:
-        "Player"  →  customer name   (from FrontText / FrontTextJSON.Text1)
-        "08"      →  jersey number   (from FrontTextJSON.Text2, padded to 2 digits)
-    When multiple rows are passed (multi-name orders) all items are stacked
-    vertically on a single canvas by the UXP plugin.
+    Process semi-customised rows (e.g. football jerseys with player name + number).
+
+    Uses a pre-built multi-slot template (default: 7 slots stacked vertically).
+    Each slot's text layers follow Photoshop copy-naming convention:
+        Slot 0: 'Player' / '08'
+        Slot 1: 'Player copy' / '08 copy'
+        Slot 2: 'Player copy 2' / '08 copy 2'  ... etc.
+
+    All slots for a batch are edited in ONE UXP job via a flat text_replacements
+    dict — no canvas manipulation, no cross-document operations.  The UXP plugin
+    crops the canvas to exactly K active slots at the end.
+
+    For orders larger than max_slots (7), multiple PSDs are created automatically:
+        OrderID.psd   → items 1-7
+        OrderID_b.psd → items 8-12  (etc.)
+
     Returns (success: bool, message: str).
     """
     if not PS_BRIDGE_AVAILABLE:
         return False, "ps_bridge.py not found — cannot process semi-custom order"
     if not _ps_alive():
         return False, "Photoshop not running — cannot process semi-custom order"
-
     if not rows:
         return False, "No rows supplied to _build_psd_semi_custom"
 
-    # Use first row to resolve template — all rows in a group share the same product
-    first_row = rows[0]
-    sku = (first_row.get("SKU") or "").strip()
-
-    # Resolve template PSD
+    # ── Resolve template ──────────────────────────────────────────────────────
+    first_row     = rows[0]
+    sku           = (first_row.get("SKU") or "").strip()
     template_name = get_semi_custom_template(sku)
     if not template_name:
         return False, f"No semi-custom template mapped for SKU: {sku}"
@@ -2555,14 +2649,23 @@ def _build_psd_semi_custom(order_id, rows, out_path):
     if not os.path.isfile(template_path):
         return False, f"Template file not found: {template_path}"
 
-    # ── Build items list — one entry per row ──────────────────────────────────
+    # ── Slot config ───────────────────────────────────────────────────────────
+    slot_cfg   = SEMI_CUSTOM_SLOT_CONFIG.get(
+        template_name,
+        {"slot_h_px": 3780, "max_slots": 7, "player_layer": "Player", "number_layer": "08"}
+    )
+    max_slots  = slot_cfg["max_slots"]
+    slot_h_px  = slot_cfg["slot_h_px"]
+    player_lyr = slot_cfg["player_layer"]
+    number_lyr = slot_cfg["number_layer"]
+
+    # ── Parse all rows into items ─────────────────────────────────────────────
     items = []
     for row in rows:
-        player_name = (row.get("FrontText") or "").strip()
+        player_name       = (row.get("FrontText") or "").strip()
+        jersey_number_raw = ""
 
-        # Try FrontTextJSON first — more reliable for multi-field orders
         front_text_json_raw = (row.get("FrontTextJSON") or "").strip()
-        jersey_number_raw   = ""
         if front_text_json_raw:
             try:
                 import json as _json
@@ -2572,7 +2675,7 @@ def _build_psd_semi_custom(order_id, rows, out_path):
                 if ftj.get("Text2"):
                     jersey_number_raw = str(ftj["Text2"]).strip()
             except Exception:
-                pass  # malformed JSON — fall back to FrontText
+                pass
 
         if not player_name:
             log(f"  [semi-custom] Skipping row — player name empty (SKU: {row.get('SKU')})", "WARN")
@@ -2580,7 +2683,6 @@ def _build_psd_semi_custom(order_id, rows, out_path):
 
         jersey_number = format_jersey_number(jersey_number_raw) if jersey_number_raw else "00"
 
-        # Colour (customer's chosen colour, or white default)
         colour_hex = "#ffffff"
         front_colours_raw = (row.get("FrontColours") or "").strip()
         if front_colours_raw:
@@ -2592,39 +2694,58 @@ def _build_psd_semi_custom(order_id, rows, out_path):
                 pass
 
         log(f"  [semi-custom] item: name='{player_name}'  number='{jersey_number}'  colour={colour_hex}", "INFO")
-        items.append({
-            "text_replacements": {"Player": player_name, "08": jersey_number},
-            "colour_hex":        colour_hex,
-            "label":             player_name,   # used for layer naming in the PSD
-        })
+        items.append({"player": player_name, "number": jersey_number, "colour_hex": colour_hex})
 
     if not items:
         return False, "No valid items extracted — all rows had empty player names"
 
     log(f"  [semi-custom] {len(items)} item(s) | template: {template_name}", "INFO")
 
-    # ── Submit job to PS bridge ────────────────────────────────────────────────
+    # ── Split into batches of max_slots; each batch → one PSD ─────────────────
+    batches  = [items[i:i + max_slots] for i in range(0, len(items), max_slots)]
+    suffixes = [""] + [f"_{chr(ord('b') + i)}" for i in range(len(batches) - 1)]  # "", "_b", "_c"…
+
     try:
         from ps_bridge import submit_job, wait_for_completion
+    except Exception as e:
+        return False, f"ps_bridge import error: {e}"
+
+    for batch_idx, (batch, suffix) in enumerate(zip(batches, suffixes)):
+        # Build output path — first batch uses out_path, extras get _b/_c suffix
+        batch_path = out_path.replace(".psd", f"{suffix}.psd") if suffix else out_path
+        if batch_idx > 0:
+            from pathlib import Path as _Path
+            _Path(batch_path).parent.mkdir(parents=True, exist_ok=True)
+
+        # Build flat text_replacements using Photoshop copy-naming for each slot
+        text_replacements = {}
+        for slot_idx, item in enumerate(batch):
+            text_replacements[_ps_copy_layer_name(player_lyr, slot_idx)] = item["player"]
+            text_replacements[_ps_copy_layer_name(number_lyr, slot_idx)] = item["number"]
+
+        k = len(batch)
+        log(f"  [semi-custom] batch {batch_idx+1}/{len(batches)}: {k} slot(s) → {os.path.basename(batch_path)}", "INFO")
+
         submit_job(
             order_id          = order_id,
             template_path     = template_path,
-            zones             = {},            # no zone images for semi-custom
-            output_path       = out_path,
-            combined          = False,         # UXP handles stacking via items[]
+            zones             = {},
+            output_path       = batch_path,
+            combined          = False,
             job_type          = "semi_custom",
-            text_replacements = items[0]["text_replacements"],  # fallback for single-item path
-            colour_hex        = items[0]["colour_hex"],
-            items             = items,         # full list — UXP stacks when len > 1
+            text_replacements = text_replacements,  # all slots in one flat dict
+            colour_hex        = batch[0]["colour_hex"],
+            quantity          = k,        # UXP crops canvas to k × slot_h_px + (k-1) × 126px
+            canvas_h_px       = slot_h_px, # height of one slot (UXP uses for crop calculation)
+            items             = [],        # flat text_replacements handles everything
         )
-        timeout = 120 * max(1, len(items))     # 2 min per item
+
+        timeout = 120 * max(1, k)
         success = wait_for_completion(order_id, timeout_sec=timeout)
-        if success:
-            return True, f"-> {os.path.basename(out_path)}  ({len(items)} item(s))"
-        else:
-            return False, "Photoshop job timed out or errored"
-    except Exception as e:
-        return False, f"Semi-custom bridge error: {e}"
+        if not success:
+            return False, f"Photoshop job timed out or errored (batch {batch_idx + 1})"
+
+    return True, f"-> {os.path.basename(out_path)}  ({len(items)} item(s), {len(batches)} PSD(s))"
 
 
 # ─── ZONE BUILDER ─────────────────────────────────────────────────────────────
