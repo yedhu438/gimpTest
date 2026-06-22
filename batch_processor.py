@@ -215,13 +215,67 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 # ── Semi-customised: template PSDs with named text layers ─────────────────────
 # These orders open a pre-designed template and only edit specific text layers.
 # No image placement, no blank canvas — just text substitution.
+_JERSEY_TEMPLATE = "england Football Adult.psd"
+
 SEMI_CUSTOM_TEMPLATE_MAP = {
-    "FootballAdultTee":      "england Football Adult.psd",
-    "FootballKidsTee":       "england Football Kids.psd",
-    "PEngFB01PoloJersy":     "england Football Adult.psd",
-    "PEngR01PoloJersy":      "england Football Adult.psd",
-    "Scotland_Football_Tee": "scotland Football Adult.psd",
-    "Scotland_FootballKids": "scotland Football Kids.psd",
+    # ── England Football ──────────────────────────────────────────────────────
+    "FootballAdultTee":         _JERSEY_TEMPLATE,
+    "FootballKidsTee":          _JERSEY_TEMPLATE,
+    "FootballEngAdultTee":      _JERSEY_TEMPLATE,
+    "FootballEngKidsTee":       _JERSEY_TEMPLATE,
+    "EngFootball_Tee":          _JERSEY_TEMPLATE,
+    "EngFootballKids_Tee":      _JERSEY_TEMPLATE,
+    "EngFootballKidsTee":       _JERSEY_TEMPLATE,
+    "EngFBallset01Kids":        _JERSEY_TEMPLATE,
+    "KidsEngSet":               _JERSEY_TEMPLATE,
+    "PPFBall01_Tee":            _JERSEY_TEMPLATE,
+    "PPFBall01KidsTee":         _JERSEY_TEMPLATE,
+    "PIFBall01_Tee":            _JERSEY_TEMPLATE,   # Ireland Football
+    "PIFBall01KidsTee":         _JERSEY_TEMPLATE,
+    "PNFBall01_Tee":            _JERSEY_TEMPLATE,   # Netherlands Football
+    "PNFBall01KidsTee":         _JERSEY_TEMPLATE,
+    "PWFBall01_Tee":            _JERSEY_TEMPLATE,   # Wales Football
+    "UKOlympicKids_Tee":        _JERSEY_TEMPLATE,
+    "FootballPortKidsTee":      _JERSEY_TEMPLATE,
+    "FootballWalAdultTee":      _JERSEY_TEMPLATE,
+    "FootballGerKidsTee":       _JERSEY_TEMPLATE,
+    # ── Scotland Football ─────────────────────────────────────────────────────
+    "Scotland_Football":        _JERSEY_TEMPLATE,
+    "Scotland_FootballKids":    _JERSEY_TEMPLATE,
+    "FootballScot3KidsTee":     _JERSEY_TEMPLATE,
+    "FootballScoKidsTee":       _JERSEY_TEMPLATE,
+    "ScotFBallset01Kids":       _JERSEY_TEMPLATE,
+    "FootballbabyVscot":        _JERSEY_TEMPLATE,
+    # ── Other Countries ───────────────────────────────────────────────────────
+    "PerFrance01":              _JERSEY_TEMPLATE,
+    "PerBrazil01":              _JERSEY_TEMPLATE,
+    "PerSpain01":               _JERSEY_TEMPLATE,
+    "PerNetherlands01":         _JERSEY_TEMPLATE,
+    "PerArgentina01":           _JERSEY_TEMPLATE,
+    "PerPortugal01":            _JERSEY_TEMPLATE,
+    "PerGermany01":             _JERSEY_TEMPLATE,
+    "PerItalia01":              _JERSEY_TEMPLATE,
+    "PinkCymru01KidsTee":       _JERSEY_TEMPLATE,
+    # ── Club / Champions ──────────────────────────────────────────────────────
+    "PerChampARSENAL01":        _JERSEY_TEMPLATE,
+    "Lvrpool201_Tee":           _JERSEY_TEMPLATE,
+    "VillaperChamps2601":       _JERSEY_TEMPLATE,
+    "PalacePer01_Tee":          _JERSEY_TEMPLATE,
+    "LBalls01Tee":              _JERSEY_TEMPLATE,
+    "LBalls02Tee":              _JERSEY_TEMPLATE,
+    # ── Rugby ─────────────────────────────────────────────────────────────────
+    "ScotlandRugby01":          _JERSEY_TEMPLATE,
+    "WalesRugby01":             _JERSEY_TEMPLATE,
+    "IrelandRugby01":           _JERSEY_TEMPLATE,
+    "EngRugby01":               _JERSEY_TEMPLATE,
+    "ERugby01":                 _JERSEY_TEMPLATE,
+    "EngFBallset01":            _JERSEY_TEMPLATE,
+    # ── Polo Jerseys ──────────────────────────────────────────────────────────
+    "PEngFB01PoloJersy":        _JERSEY_TEMPLATE,
+    "PEngR01PoloJersy":         _JERSEY_TEMPLATE,
+    "PSct01PoloJersy":          _JERSEY_TEMPLATE,
+    "PWals01PoloJersy":         _JERSEY_TEMPLATE,
+    "PWFBall01PoloJersy":       _JERSEY_TEMPLATE,
 }
 
 # SEMI_CUSTOM_OUTPUT_FOLDER is built at runtime inside run_batch (uses today's date folder)
@@ -2724,7 +2778,7 @@ def _build_psd_semi_custom(order_id, rows, out_path):
             text_replacements[_ps_copy_layer_name(number_lyr, slot_idx)] = item["number"]
 
         k = len(batch)
-        log(f"  [semi-custom] batch {batch_idx+1}/{len(batches)}: {k} slot(s) → {os.path.basename(batch_path)}", "INFO")
+        log(f"  [semi-custom] batch {batch_idx+1}/{len(batches)}: {k} slot(s) -> {os.path.basename(batch_path)}", "INFO")
 
         submit_job(
             order_id          = order_id,
@@ -3621,7 +3675,10 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
         log(f"[{i}/{total_orders}] {order_id}  ({len(group_rows)} items)  |  {skus_str}")
 
         # ── Semi-customised detection ─────────────────────────────────────────
-        is_semi_custom = (first_row.get("CustomizationCategory") or "").strip().lower() == "semicustomized"
+        # Only treat as semi-custom if the SKU has a known jersey template.
+        # Orders tagged SemiCustomized but with no template go through normal processing.
+        _cat = (first_row.get("CustomizationCategory") or "").strip().lower()
+        is_semi_custom = _cat == "semicustomized" and get_semi_custom_template(sku_raw) is not None
 
         if is_semi_custom:
             # Override output path → Output\<date>\semicustomized\
