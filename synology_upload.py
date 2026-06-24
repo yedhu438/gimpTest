@@ -99,10 +99,10 @@ class SynologyUploader:
 
 def sync_output_folder(local_root=r"C:\gimpTest\Output"):
     """
-    Walk C:\gimpTest\Output and upload every PSD,
+    Walk C:\\gimpTest\\Output and upload every PSD,
     preserving the subfolder structure on the NAS.
-    e.g. C:\gimpTest\Output\2026-06-11\DTF Front\black\order.psd
-      → /Automation/2026-06-11/DTF Front/black/order.psd
+    e.g. C:\\gimpTest\\Output\\2026-06-11\\DTF Front\\black\\order.psd
+      -> /Automation/2026-06-11/DTF Front/black/order.psd
     """
     nas = SynologyUploader()
     uploaded = 0

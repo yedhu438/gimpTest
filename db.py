@@ -31,26 +31,7 @@ _name   = os.environ.get("DB_NAME",   "dbAmazonCustomOrders")
 _uid    = os.environ.get("DB_UID",    "")
 _pwd    = os.environ.get("DB_PWD",    "")
 
-# ── Build connection string ───────────────────────────────────────────────────
-# SQL Server auth (UID + PWD) when credentials are provided (live VPS).
-# Falls back to Windows auth (Trusted_Connection) for local SQLEXPRESS.
-if _uid and _pwd:
-    _CONN_STR = (
-        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-        f"SERVER={_server};DATABASE={_name};"
-        f"UID={_uid};PWD={_pwd};"
-        "TrustServerCertificate=yes;"
-        "Connection Timeout=30;"
-    )
-else:
-    _CONN_STR = (
-        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-        f"SERVER={_server};DATABASE={_name};"
-        "Trusted_Connection=yes;TrustServerCertificate=yes;"
-        "Connection Timeout=30;"
-    )
-
-# Fallback to the older "SQL Server" driver if ODBC 17 is not installed
+# Fallback chain: ODBC Driver 18 → 17 → legacy "SQL Server"
 def _build_conn_str(driver: str) -> str:
     if _uid and _pwd:
         return (
@@ -71,11 +52,10 @@ def _build_conn_str(driver: str) -> str:
 def get_connection(timeout: int = 30) -> pyodbc.Connection:
     """Return an open pyodbc connection to the database.
 
-    Tries ODBC Driver 17 first, then falls back to the legacy
-    'SQL Server' driver so the code works on machines that only
-    have the older driver installed.
+    Tries ODBC Driver 18 first, then 17, then the legacy
+    'SQL Server' driver so the code works on all machines.
     """
-    drivers_to_try = ["ODBC Driver 17 for SQL Server", "SQL Server"]
+    drivers_to_try = ["ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server", "SQL Server"]
     last_err = None
     for driver in drivers_to_try:
         cs = _build_conn_str(driver)
@@ -96,7 +76,7 @@ def get_connection(timeout: int = 30) -> pyodbc.Connection:
         "    2. SQL Server port 1433 is open on the VPS firewall\n"
         "    3. DB_UID / DB_PWD in .env are correct\n"
         "    4. An ODBC driver is installed: "
-        "'ODBC Driver 17 for SQL Server' or 'SQL Server'\n",
+        "'ODBC Driver 18 for SQL Server', 17, or 'SQL Server'\n",
         file=sys.stderr,
     )
     raise last_err

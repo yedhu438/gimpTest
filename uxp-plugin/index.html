@@ -73,7 +73,7 @@ async function pickRoot(){
   try{
     const folder=await fs.getFolder();if(!folder){log("No folder selected.",true);return;}
     await setupFolders(folder);
-    const token=fs.createPersistentToken(folder);
+    const token=await fs.createPersistentToken(folder);
     const tf=await folder.createFile("uxp_token.txt",{overwrite:true});
     await tf.write(token,{format:uxp.storage.formats.utf8});
     log("Ready: "+folder.nativePath);

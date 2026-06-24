@@ -3370,6 +3370,14 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
         topaz_cols = ""
         conn.close(); conn = get_db(); cur = conn.cursor()
 
+    # Check whether the background-removal flag columns exist
+    try:
+        cur.execute("SELECT TOP 0 IsFrontBgRemove FROM tblCustomOrderDetails")
+        bg_remove_cols = ", d.IsFrontBgRemove, d.IsBackBgRemove, d.IsPocketBgRemove, d.IsSleeveBgRemove"
+    except Exception:
+        bg_remove_cols = ""
+        conn.close(); conn = get_db(); cur = conn.cursor()
+
     cur.execute(f"""
         SELECT {top}
             o.OrderID, o.SKU, o.ItemType, o.Quantity, o.DateAdd,
@@ -3385,6 +3393,7 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
             d.CustomizationCategory
             {premium_cols}
             {topaz_cols}
+            {bg_remove_cols}
         FROM tblCustomOrder o
         JOIN tblCustomOrderDetails d ON o.idCustomOrder = d.idCustomOrder
         WHERE {where}
