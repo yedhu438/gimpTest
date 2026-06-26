@@ -9,7 +9,7 @@ No pywin32 needed — uses a lightweight VBScript one-liner via cscript.exe.
 Photoshop must be open before calling trigger_and_wait().
 """
 
-import json, os, shutil, subprocess, time, urllib.request, urllib.parse
+import json, os, shutil, ssl, subprocess, time, urllib.request, urllib.parse
 from datetime import datetime
 from pathlib import Path
 
@@ -33,8 +33,72 @@ for _d in (JOBS_DIR, ASSETS_DIR, DONE_DIR, ERROR_DIR):
 JSX_PATH = str(Path(__file__).parent / "ps_worker.jsx")
 
 # ── Submit job ─────────────────────────────────────────────────────────────────
+def _clean_zone(zone_name, zone, canvas_w_px, canvas_h_px):
+    """Copy image to ASSETS_DIR and download preview. Returns a cleaned zone dict for the job JSON."""
+    img_src = (zone.get("customer_image") or "").strip()
+    img_path = None
+    if img_src and os.path.isfile(img_src):
+        img_filename = Path(img_src).name
+        dest = ASSETS_DIR / img_filename
+        if not dest.exists():
+            shutil.copy2(img_src, dest)
+        img_path = img_filename
+
+    preview_src = (zone.get("preview_image") or "").strip()
+    preview_path = None
+    if preview_src:
+        if preview_src.startswith("http"):
+            url_basename = Path(urllib.parse.urlparse(preview_src).path).name or "preview.jpg"
+            dest_p = ASSETS_DIR / url_basename
+            if not dest_p.exists():
+                try:
+                    _ctx = ssl.create_default_context(); _ctx.check_hostname = False; _ctx.verify_mode = ssl.CERT_NONE
+                    with urllib.request.urlopen(preview_src, context=_ctx) as _r:
+                        dest_p.write_bytes(_r.read())
+                    print(f"[PS Bridge] Preview downloaded: {url_basename}")
+                except Exception as e:
+                    print(f"[PS Bridge] Preview download failed ({zone_name}): {e}")
+                    url_basename = None
+            preview_path = url_basename
+        elif os.path.isfile(preview_src):
+            url_basename = Path(preview_src).name
+            dest_p = ASSETS_DIR / url_basename
+            if not dest_p.exists():
+                shutil.copy2(preview_src, dest_p)
+            preview_path = url_basename
+        else:
+            url_basename = Path(preview_src).name
+            dest_p = ASSETS_DIR / url_basename
+            if not dest_p.exists():
+                try:
+                    url = IMAGE_SERVER_URL.rstrip("/") + "/" + url_basename
+                    _ctx = ssl.create_default_context(); _ctx.check_hostname = False; _ctx.verify_mode = ssl.CERT_NONE
+                    with urllib.request.urlopen(url, context=_ctx) as _r:
+                        dest_p.write_bytes(_r.read())
+                    print(f"[PS Bridge] Preview downloaded from crssoft: {url_basename}")
+                except Exception as e:
+                    print(f"[PS Bridge] Preview download failed ({zone_name}): {e}")
+                    url_basename = None
+            preview_path = url_basename
+
+    return {
+        "customer_image": img_path,
+        "text_lines":     zone.get("text_lines") or [],
+        "font_name":      zone.get("font_name") or "Arial Bold",
+        "font_ps_name":   zone.get("font_ps_name") or "Arial-BoldMT",
+        "font_family":    zone.get("font_family") or "Arial",
+        "font_style":     zone.get("font_style") or "Bold",
+        "colour_hex":     zone.get("colour_hex") or "#ffffff",
+        "label":          zone.get("label") or zone_name.upper(),
+        "zone_w_px":      zone.get("zone_w_px") or canvas_w_px,
+        "zone_h_px":      zone.get("zone_h_px") or canvas_h_px,
+        "preview_image":  preview_path,
+    }
+
+
 def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, canvas_h_px=3780, combined=True,
-               job_type="standard", text_replacements=None, colour_hex=None, quantity=1, items=None):
+               job_type="standard", text_replacements=None, colour_hex=None, quantity=1, items=None,
+               multi_items=None):
     """
     Write a job JSON for Photoshop UXP plugin to pick up.
     zones = {
@@ -52,87 +116,33 @@ def submit_job(order_id, template_path, zones, output_path, canvas_w_px=3780, ca
         },
         ...
     }
-    combined=True  → UXP stacks zones vertically (needed for blank templates)
-    combined=False → UXP uses per-layer CustomerText_ slots (for layered templates)
+    combined=True    → UXP stacks zones vertically (needed for blank templates)
+    combined=False   → UXP uses per-layer CustomerText_ slots (for layered templates)
+    multi_items      → list of {zones, sku} dicts for orders with different designs per item
     """
-    # Ensure images are in ASSETS_DIR (Temp/OrderImages) where UXP getImageEntry looks
-    clean_zones = {}
-    for zone_name, zone in zones.items():
-        img_src = (zone.get("customer_image") or "").strip()
-        img_path = None
-        if img_src and os.path.isfile(img_src):
-            img_filename = Path(img_src).name
-            dest = ASSETS_DIR / img_filename
-            if not dest.exists():          # skip copy if already downloaded there
-                shutil.copy2(img_src, dest)
-            img_path = img_filename        # UXP looks up by filename in Temp/OrderImages
+    clean_zones = {zn: _clean_zone(zn, z, canvas_w_px, canvas_h_px) for zn, z in zones.items()}
 
-        # Download preview image (URL from DB) to ASSETS_DIR so UXP can find it locally
-        preview_src = (zone.get("preview_image") or "").strip()
-        preview_path = None
-        if preview_src:
-            if preview_src.startswith("http"):
-                # Save with bare basename — UXP looks up by basename in Temp/OrderImages
-                url_basename = Path(urllib.parse.urlparse(preview_src).path).name or "preview.jpg"
-                dest_p = ASSETS_DIR / url_basename
-                if not dest_p.exists():
-                    try:
-                        urllib.request.urlretrieve(preview_src, dest_p)
-                        print(f"[PS Bridge] Preview downloaded: {url_basename}")
-                    except Exception as e:
-                        print(f"[PS Bridge] Preview download failed ({zone_name}): {e}")
-                        url_basename = None
-                preview_path = url_basename
-            elif os.path.isfile(preview_src):
-                # Local file — copy to ASSETS_DIR using bare filename
-                url_basename = Path(preview_src).name
-                dest_p = ASSETS_DIR / url_basename
-                if not dest_p.exists():
-                    shutil.copy2(preview_src, dest_p)
-                preview_path = url_basename
-            else:
-                # Bare filename from DB (e.g. "64267431450482-frontpreview.jpg")
-                # Build full crssoft URL and download to ASSETS_DIR
-                url_basename = Path(preview_src).name
-                dest_p = ASSETS_DIR / url_basename
-                if not dest_p.exists():
-                    try:
-                        url = IMAGE_SERVER_URL.rstrip("/") + "/" + url_basename
-                        urllib.request.urlretrieve(url, dest_p)
-                        print(f"[PS Bridge] Preview downloaded from crssoft: {url_basename}")
-                    except Exception as e:
-                        print(f"[PS Bridge] Preview download failed ({zone_name}): {e}")
-                        url_basename = None
-                preview_path = url_basename
-
-        clean_zones[zone_name] = {
-            "customer_image": img_path,
-            "text_lines":     zone.get("text_lines") or [],
-            "font_name":      zone.get("font_name") or "Arial Bold",
-            "font_ps_name":   zone.get("font_ps_name") or "Arial-BoldMT",
-            "font_family":    zone.get("font_family") or "Arial",
-            "font_style":     zone.get("font_style") or "Bold",
-            "colour_hex":     zone.get("colour_hex") or "#ffffff",
-            "label":          zone.get("label") or zone_name.upper(),
-            "zone_w_px":      zone.get("zone_w_px") or canvas_w_px,
-            "zone_h_px":      zone.get("zone_h_px") or canvas_h_px,
-            "preview_image":  preview_path,   # local filename in Temp/OrderImages, or None
-        }
+    clean_multi_items = []
+    for item in (multi_items or []):
+        item_zones = {zn: _clean_zone(zn, z, canvas_w_px, canvas_h_px)
+                      for zn, z in (item.get("zones") or {}).items()}
+        clean_multi_items.append({"zones": item_zones, "sku": item.get("sku", "")})
 
     job = {
         "order_id":          order_id,
         "template":          str(template_path),
         "zones":             clean_zones,
         "output_path":       str(output_path),
-        "combined":          combined,          # True = stacked layout for blank templates
+        "combined":          combined,
         "canvas_w_px":       canvas_w_px,
         "canvas_h_px":       canvas_h_px,
         "dpi":               320,
-        "type":              job_type,           # "standard" | "semi_custom"
-        "text_replacements": text_replacements or {},  # {"Player": "Superfine", "08": "02"}
-        "colour_hex":        colour_hex or "#ffffff",   # global text colour for semi_custom
-        "quantity":          max(1, int(quantity or 1)),  # number of copies to stack vertically
-        "items":             items or [],               # multi-item semi-custom [{text_replacements, colour_hex, label}, ...]
+        "type":              job_type,
+        "text_replacements": text_replacements or {},
+        "colour_hex":        colour_hex or "#ffffff",
+        "quantity":          max(1, int(quantity or 1)),
+        "items":             items or [],
+        "multi_items":       clean_multi_items,
         "submitted_at":      datetime.now().isoformat(),
     }
 
