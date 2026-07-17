@@ -1,11 +1,11 @@
-# Quick test: render sample text with each premium font and save PNG results.
+﻿# Quick test: render sample text with each premium font and save PNG results.
 import os, sys, subprocess, base64, re
 from PIL import Image
 import numpy as np
 
-FONT_FOLDER = r"C:\Varsany\Fonts"
-OUT_FOLDER  = r"C:\Varsany\Output\premium_font_test"
-TEMP_FOLDER = r"C:\Varsany\Temp"
+FONT_FOLDER = r"C:\gimpTest\Fonts"
+OUT_FOLDER  = r"C:\gimpTest\Output\premium_font_test"
+TEMP_FOLDER = r"C:\gimpTest\Temp"
 CANVAS_W    = 1200   # small canvas for fast testing
 TEST_TEXT   = ["HELLO", "WORLD"]
 

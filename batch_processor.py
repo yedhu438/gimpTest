@@ -5,8 +5,8 @@ Processes all unprocessed orders from the database.
 Generates layered PSD files for each order.
 
 Images : W:\\images\\Jan-Image\\ and W:\\images\\Feb-Image\\
-Fonts  : C:\\Varsany\\Fonts\\ + W:\\fonts\\ + system fonts
-Output : C:\\Varsany\\Output\\YYYY-MM-DD\\OrderID.psd
+Fonts  : C:\\gimpTest\\Fonts\\ + W:\\fonts\\ + system fonts
+Output : C:\\gimpTest\\Output\\YYYY-MM-DD\\OrderID.psd
 
 Usage:
     python batch_processor.py                  # all unprocessed orders
@@ -133,19 +133,9 @@ def _build_psd_via_photoshop(order_id, row, out_path, force_bg_remove=False, qua
     sku     = row.get("SKU") or ""
     product = detect_product(sku)
 
-    # Find best-matching template: SKU-specific -> product generic -> default
-    template_path = None
-    for candidate in [
-        os.path.join(TEMPLATES_FOLDER, f"{sku}.psd"),
-        os.path.join(TEMPLATES_FOLDER, f"{product}.psd"),
-        os.path.join(TEMPLATES_FOLDER, "default.psd"),
-    ]:
-        if os.path.isfile(candidate):
-            template_path = candidate
-            break
-
-    if not template_path:
-        return False, f"No template found for {sku}/{product} in {TEMPLATES_FOLDER}"
+    # UXP creates the canvas from scratch (blank CMYK/transparent, exact zone dims) —
+    # no template file needed, so no "No template found" failure mode for standard orders.
+    template_path = ""
 
     # Build zones dict from the order row, with full font + dimension info for UXP
     # use_topaz: True when IsTopazImageProcess=1 (Topaz done).
@@ -154,10 +144,10 @@ def _build_psd_via_photoshop(order_id, row, out_path, force_bg_remove=False, qua
     _topaz_flag = row.get("IsTopazImageProcess")
     use_topaz   = (_topaz_flag == 1 or _topaz_flag is True)
     zone_map = {
-        "front":  ("FrontText",  "FrontFonts",  "FrontColours",  "FrontImage",  "FrontPreviewImage",  "FrontTopazImage"),
-        "back":   ("BackText",   "BackFonts",   "BackColours",   "BackImage",   "BackPreviewImage",   "BackTopazImage"),
-        "pocket": ("PocketText", "PocketFonts", "PocketColours", "PocketImage", "PocketPreviewImage", "PocketTopazImage"),
-        "sleeve": ("SleeveText", "SleeveFonts", "SleeveColours", "SleeveImage", "SleevePreviewImage", "SleeveTopazImage"),
+        "front":  ("FrontText",  "FrontFonts",  "FrontColours",  "FrontImage",  "FrontImageJSON",  "FrontPreviewImage",  "FrontTopazImage"),
+        "back":   ("BackText",   "BackFonts",   "BackColours",   "BackImage",   "BackImageJSON",   "BackPreviewImage",   "BackTopazImage"),
+        "pocket": ("PocketText", "PocketFonts", "PocketColours", "PocketImage", "PocketImageJSON", "PocketPreviewImage", "PocketTopazImage"),
+        "sleeve": ("SleeveText", "SleeveFonts", "SleeveColours", "SleeveImage", "SleeveImageJSON", "SleevePreviewImage", "SleeveTopazImage"),
     }
     product_canvas = PRODUCT_CANVAS.get(product, PRODUCT_CANVAS["default"])
     garment_rgb    = get_garment_rgb(sku)
@@ -168,88 +158,79 @@ def _build_psd_via_photoshop(order_id, row, out_path, force_bg_remove=False, qua
         "sleeve": "IsSleeveBgRemove",
     }
     zones = {}
-    for zone_name, (txt_col, font_col, col_col, img_col, prev_col, topaz_col) in zone_map.items():
-        text_raw = (row.get(txt_col) or "").strip()
-        # Prefer Topaz-enhanced image when available; fall back to original
-        img_raw = ""
-        if use_topaz:
-            _topaz_raw = (row.get(topaz_col) or "").strip()
-            # FrontTopazImage is JSON e.g. {"Image1":"filename.jpg"} — parse it
-            _topaz_files = parse_image_json(_topaz_raw) if _topaz_raw.startswith("{") else ([_topaz_raw] if _topaz_raw else [])
-            img_raw = _topaz_files[0] if _topaz_files else ""
-        if not img_raw:
-            img_raw = (row.get(img_col) or "").strip()
-        if not text_raw and not img_raw:
+    for zone_name, (txt_col, font_col, col_col, img_col, json_col, prev_col, topaz_col) in zone_map.items():
+        text_raw  = (row.get(txt_col) or "").strip()
+        img_files = resolve_zone_images(row, use_topaz, topaz_col, json_col, img_col)
+        if not text_raw and not img_files:
             continue
-        font_name = parse_font(row.get(font_col) or "")
-        zone_w, zone_h = product_canvas.get(zone_name, product_canvas.get("front", (9600, 9600)))
 
-        # Background removal: apply before handing the image to Photoshop.
-        # Triggered by force_bg_remove (CLI flag), designer DB flag, or auto-detection.
-        img_path = find_image(img_raw) if img_raw else None
-        # If Topaz image download failed, fall back to original image
-        if not img_path and use_topaz and img_raw:
-            _orig_raw = (row.get(img_col) or "").strip()
-            if _orig_raw:
-                log(f"  Topaz image unavailable [{zone_name}], falling back to original", "WARN")
-                img_path = find_image(_orig_raw)
-        if img_path and garment_rgb:
-            db_flag = bool(row.get(bg_flag_cols.get(zone_name, ""), False))
-            should_remove = force_bg_remove or db_flag
-            try:
-                from PIL import Image as _PILImage
-                _src = _PILImage.open(img_path).convert("RGBA")
-                if not should_remove:
-                    should_remove = image_bg_matches_garment(_src, garment_rgb)
-                if should_remove:
-                    _cleaned  = remove_background_colourkey(_src, garment_rgb)
-                    _out_path = img_path.rsplit(".", 1)[0] + "_bgremoved.png"
-                    _cleaned.save(_out_path, "PNG")
-                    img_path  = _out_path
-                    log(f"  bg-remove ({'forced' if (force_bg_remove or db_flag) else 'auto'}) [{zone_name}]: {garment_rgb}", "INFO")
-            except Exception as _e:
-                log(f"  bg-remove failed [{zone_name}]: {_e}", "WARN")
+        # Pocket "Left & Right" combo carries 2 images — a dict can't hold two
+        # images under one "pocket" key, so build pocket_left/pocket_right as
+        # separate zone entries, each with its own image/font/colour/label.
+        if zone_name == "pocket" and len(img_files) >= 2:
+            sides = [("pocket_left", "Left", img_files[0]), ("pocket_right", "Right", img_files[1])]
+        else:
+            sides = [(zone_name, None, img_files[0] if img_files else "")]
 
-        # Derive Photoshop font fields — UXP batchPlay uses these to set the font
-        _ps_name, _ps_family, _ps_style = get_ps_font(font_name)
-        _text_lines  = parse_texts(text_raw) if text_raw else []
-        _colour_hex  = parse_colour(row.get(col_col) or "")
+        for zone_key, side, img_raw in sides:
+            font_name = parse_font(row.get(font_col) or "", side)
+            zone_w, zone_h = product_canvas.get(zone_name, product_canvas.get("front", (9600, 9600)))
 
-        # For premium SVG colour fonts, clear colour_hex so Photoshop uses the
-        # font's built-in SVG colour data (colourful blocks, glitter, camo etc.)
-        # instead of overriding with a solid customer colour.
-        if _text_lines and _is_svg_only_font(font_name):
-            _colour_hex = ""
+            # Background removal: apply before handing the image to Photoshop.
+            # Triggered by force_bg_remove (CLI flag), designer DB flag, or auto-detection.
+            img_path = find_image(img_raw) if img_raw else None
+            # If Topaz image download failed, fall back to original image
+            if not img_path and use_topaz and img_raw:
+                _orig_files = resolve_zone_images(row, False, topaz_col, json_col, img_col)
+                _side_idx   = 1 if side == "Right" else 0
+                _orig_raw   = _orig_files[_side_idx] if len(_orig_files) > _side_idx else (_orig_files[0] if _orig_files else "")
+                if _orig_raw:
+                    log(f"  Topaz image unavailable [{zone_key}], falling back to original", "WARN")
+                    img_path = find_image(_orig_raw)
+            if img_path and garment_rgb:
+                db_flag = bool(row.get(bg_flag_cols.get(zone_name, ""), False))
+                should_remove = force_bg_remove or db_flag
+                try:
+                    from PIL import Image as _PILImage
+                    _src = _PILImage.open(img_path).convert("RGBA")
+                    if not should_remove:
+                        should_remove = image_bg_matches_garment(_src, garment_rgb)
+                    if should_remove:
+                        _cleaned  = remove_background_colourkey(_src, garment_rgb)
+                        _out_path = img_path.rsplit(".", 1)[0] + "_bgremoved.png"
+                        _cleaned.save(_out_path, "PNG")
+                        img_path  = _out_path
+                        log(f"  bg-remove ({'forced' if (force_bg_remove or db_flag) else 'auto'}) [{zone_key}]: {garment_rgb}", "INFO")
+                except Exception as _e:
+                    log(f"  bg-remove failed [{zone_key}]: {_e}", "WARN")
 
-        # Pre-render emoji text via pilmoji (Google Emoji) → PNG image layer.
-        # Photoshop places the PNG instead of creating a text layer, so the
-        # emoji style matches Google Noto exactly rather than Segoe UI Emoji.
-        if _text_lines and PILMOJI_AVAILABLE and any(
-                ord(c) > 0x2000 for line in _text_lines for c in line):
-            try:
-                _emoji_img, _, _ = build_text_layer(_text_lines, font_name, _colour_hex, zone_w, zone_h)
-                _emoji_fname = f"{order_id}_{zone_name}_emoji.png"
-                _emoji_fpath = str(ps_bridge.ASSETS_DIR / _emoji_fname)
-                _emoji_img.save(_emoji_fpath, "PNG")
-                img_path    = _emoji_fpath
-                _text_lines = []
-                log(f"  Emoji text pre-rendered via pilmoji [{zone_name}]", "INFO")
-            except Exception as _e:
-                log(f"  Emoji pre-render failed [{zone_name}], keeping as text layer: {_e}", "WARN")
+            # Derive Photoshop font fields — UXP batchPlay uses these to set the font
+            _ps_name, _ps_family, _ps_style = get_ps_font(font_name)
+            _text_lines  = parse_texts(text_raw) if text_raw and side is None else []
+            _colour_hex  = parse_colour(row.get(col_col) or "", side)
 
-        zones[zone_name] = {
-            "customer_image": img_path,
-            "text_lines":     _text_lines,
-            "font_name":      font_name,
-            "font_ps_name":   _ps_name,
-            "font_family":    _ps_family,
-            "font_style":     _ps_style,
-            "colour_hex":     _colour_hex,
-            "label":          make_zone_label(zone_name, sku),
-            "zone_w_px":      zone_w,
-            "zone_h_px":      zone_h,
-            "preview_image":  (row.get(prev_col) or None),
-        }
+            # Premium/SVG colour fonts: use black as base colour so Photoshop has
+            # something to render. The font's own SVG texture overrides the colour.
+            # Passing "" (empty) leaves no colour → text is invisible.
+            if _text_lines and _is_svg_only_font(font_name):
+                _colour_hex = "#000000"
+
+            _emoji_text_path = None
+
+            zones[zone_key] = {
+                "customer_image":   img_path,
+                "emoji_text_image": _emoji_text_path,
+                "text_lines":       _text_lines,
+                "font_name":      font_name,
+                "font_ps_name":   _ps_name,
+                "font_family":    _ps_family,
+                "font_style":     _ps_style,
+                "colour_hex":     _colour_hex,
+                "label":          make_zone_label(zone_key.replace("_", " "), sku),
+                "zone_w_px":      zone_w,
+                "zone_h_px":      zone_h,
+                "preview_image":  (row.get(prev_col) or None),
+            }
 
     if not zones:
         return False, "No zones — no image or text data"
@@ -268,6 +249,12 @@ def _build_psd_via_photoshop(order_id, row, out_path, force_bg_remove=False, qua
     if quantity > 1:
         log(f"  Quantity={quantity} — UXP will stack {quantity} copies vertically", "INFO")
 
+    # Socks: always print twice regardless of order quantity (one pair = two socks).
+    # Each sock canvas is 6×6cm; doubling produces two designs stacked on one DTF sheet.
+    if product == "socks":
+        quantity = quantity * 2
+        log(f"  Socks pair: printing {quantity} copies (2 per ordered pair)", "INFO")
+
     _ps_submit(order_id, template_path, zones, out_path,
                canvas_w_px=canvas_w, canvas_h_px=canvas_h, combined=True,
                quantity=quantity)
@@ -275,6 +262,8 @@ def _build_psd_via_photoshop(order_id, row, out_path, force_bg_remove=False, qua
     timeout = 600 * max(1, quantity // 2) if quantity > 2 else 600
     success = _ps_wait(order_id, timeout_sec=timeout, use_uxp=True)
     if success:
+        if not os.path.isfile(out_path):
+            return False, f"UXP reported done but output file missing: {out_path}"
         return True, out_path
     return False, "Photoshop UXP timed out or errored"
 
@@ -290,23 +279,14 @@ def _build_psd_multi_via_photoshop(order_id, group_rows, out_path, force_bg_remo
     first_sku    = first_row.get("SKU") or ""
     first_product = detect_product(first_sku)
 
-    template_path = None
-    for candidate in [
-        os.path.join(TEMPLATES_FOLDER, f"{first_sku}.psd"),
-        os.path.join(TEMPLATES_FOLDER, f"{first_product}.psd"),
-        os.path.join(TEMPLATES_FOLDER, "default.psd"),
-    ]:
-        if os.path.isfile(candidate):
-            template_path = candidate
-            break
-    if not template_path:
-        return False, f"No template found for {first_sku}/{first_product} in {TEMPLATES_FOLDER}"
+    # UXP creates the canvas from scratch — no template file needed (see _build_psd_via_photoshop).
+    template_path = ""
 
     _zone_map = {
-        "front":  ("FrontText",  "FrontFonts",  "FrontColours",  "FrontImage",  "FrontPreviewImage",  "FrontTopazImage"),
-        "back":   ("BackText",   "BackFonts",   "BackColours",   "BackImage",   "BackPreviewImage",   "BackTopazImage"),
-        "pocket": ("PocketText", "PocketFonts", "PocketColours", "PocketImage", "PocketPreviewImage", "PocketTopazImage"),
-        "sleeve": ("SleeveText", "SleeveFonts", "SleeveColours", "SleeveImage", "SleevePreviewImage", "SleeveTopazImage"),
+        "front":  ("FrontText",  "FrontFonts",  "FrontColours",  "FrontImage",  "FrontImageJSON",  "FrontPreviewImage",  "FrontTopazImage"),
+        "back":   ("BackText",   "BackFonts",   "BackColours",   "BackImage",   "BackImageJSON",   "BackPreviewImage",   "BackTopazImage"),
+        "pocket": ("PocketText", "PocketFonts", "PocketColours", "PocketImage", "PocketImageJSON", "PocketPreviewImage", "PocketTopazImage"),
+        "sleeve": ("SleeveText", "SleeveFonts", "SleeveColours", "SleeveImage", "SleeveImageJSON", "SleevePreviewImage", "SleeveTopazImage"),
     }
     _bg_cols = {"front":"IsFrontBgRemove","back":"IsBackBgRemove","pocket":"IsPocketBgRemove","sleeve":"IsSleeveBgRemove"}
 
@@ -322,79 +302,78 @@ def _build_psd_multi_via_photoshop(order_id, group_rows, out_path, force_bg_remo
         use_topaz    = (row.get("IsTopazImageProcess") in (1, True))
 
         zones = {}
-        for zone_name, (txt_col, font_col, col_col, img_col, prev_col, topaz_col) in _zone_map.items():
-            text_raw = (row.get(txt_col) or "").strip()
-            img_raw  = ""
-            if use_topaz:
-                _tr = (row.get(topaz_col) or "").strip()
-                _tf = parse_image_json(_tr) if _tr.startswith("{") else ([_tr] if _tr else [])
-                img_raw = _tf[0] if _tf else ""
-            if not img_raw:
-                img_raw = (row.get(img_col) or "").strip()
-            if not text_raw and not img_raw:
+        for zone_name, (txt_col, font_col, col_col, img_col, json_col, prev_col, topaz_col) in _zone_map.items():
+            text_raw  = (row.get(txt_col) or "").strip()
+            img_files = resolve_zone_images(row, use_topaz, topaz_col, json_col, img_col)
+            if not text_raw and not img_files:
                 continue
 
-            font_name        = parse_font(row.get(font_col) or "")
-            zone_w, zone_h   = prod_canvas.get(zone_name, prod_canvas.get("front", (9600, 9600)))
-            canvas_w         = max(canvas_w, zone_w)
-            canvas_h         = max(canvas_h, zone_h)
+            # Pocket "Left & Right" combo carries 2 images — split into
+            # pocket_left/pocket_right zone entries (see _build_psd_via_photoshop).
+            if zone_name == "pocket" and len(img_files) >= 2:
+                sides = [("pocket_left", "Left", img_files[0]), ("pocket_right", "Right", img_files[1])]
+            else:
+                sides = [(zone_name, None, img_files[0] if img_files else "")]
 
-            img_path = find_image(img_raw) if img_raw else None
-            if not img_path and use_topaz and img_raw:
-                _orig = (row.get(img_col) or "").strip()
-                if _orig:
-                    log(f"  Topaz unavailable [{zone_name}], falling back to original", "WARN")
-                    img_path = find_image(_orig)
-            if img_path and garment_rgb:
-                db_flag = bool(row.get(_bg_cols.get(zone_name, ""), False))
-                should_remove = force_bg_remove or db_flag
-                try:
-                    from PIL import Image as _PILImage
-                    _src = _PILImage.open(img_path).convert("RGBA")
-                    if not should_remove:
-                        should_remove = image_bg_matches_garment(_src, garment_rgb)
-                    if should_remove:
-                        _cl  = remove_background_colourkey(_src, garment_rgb)
-                        _op  = img_path.rsplit(".", 1)[0] + "_bgremoved.png"
-                        _cl.save(_op, "PNG")
-                        img_path = _op
-                except Exception as _e:
-                    log(f"  bg-remove failed [{zone_name}]: {_e}", "WARN")
+            for zone_key, side, img_raw in sides:
+                font_name        = parse_font(row.get(font_col) or "", side)
+                zone_w, zone_h   = prod_canvas.get(zone_name, prod_canvas.get("front", (9600, 9600)))
+                canvas_w         = max(canvas_w, zone_w)
+                canvas_h         = max(canvas_h, zone_h)
 
-            _ps_name, _ps_family, _ps_style = get_ps_font(font_name)
-            _text_lines = parse_texts(text_raw) if text_raw else []
-            _colour_hex = parse_colour(row.get(col_col) or "")
-            if _text_lines and _is_svg_only_font(font_name):
-                _colour_hex = ""
+                img_path = find_image(img_raw) if img_raw else None
+                if not img_path and use_topaz and img_raw:
+                    _orig_files = resolve_zone_images(row, False, topaz_col, json_col, img_col)
+                    _side_idx   = 1 if side == "Right" else 0
+                    _orig = _orig_files[_side_idx] if len(_orig_files) > _side_idx else (_orig_files[0] if _orig_files else "")
+                    if _orig:
+                        log(f"  Topaz unavailable [{zone_key}], falling back to original", "WARN")
+                        img_path = find_image(_orig)
+                if img_path and garment_rgb:
+                    db_flag = bool(row.get(_bg_cols.get(zone_name, ""), False))
+                    should_remove = force_bg_remove or db_flag
+                    try:
+                        from PIL import Image as _PILImage
+                        _src = _PILImage.open(img_path).convert("RGBA")
+                        if not should_remove:
+                            should_remove = image_bg_matches_garment(_src, garment_rgb)
+                        if should_remove:
+                            _cl  = remove_background_colourkey(_src, garment_rgb)
+                            _op  = img_path.rsplit(".", 1)[0] + "_bgremoved.png"
+                            _cl.save(_op, "PNG")
+                            img_path = _op
+                    except Exception as _e:
+                        log(f"  bg-remove failed [{zone_key}]: {_e}", "WARN")
 
-            if _text_lines and PILMOJI_AVAILABLE and any(ord(c) > 0x2000 for line in _text_lines for c in line):
-                try:
-                    _ei, _, _ = build_text_layer(_text_lines, font_name, _colour_hex, zone_w, zone_h)
-                    _ef = f"{order_id}_{zone_name}_{row_sku}_emoji.png"
-                    _ep = str(ps_bridge.ASSETS_DIR / _ef)
-                    _ei.save(_ep, "PNG")
-                    img_path    = _ep
-                    _text_lines = []
-                except Exception as _e:
-                    log(f"  Emoji pre-render failed [{zone_name}]: {_e}", "WARN")
+                _ps_name, _ps_family, _ps_style = get_ps_font(font_name)
+                _text_lines = parse_texts(text_raw) if text_raw and side is None else []
+                _colour_hex = parse_colour(row.get(col_col) or "", side)
+                if _text_lines and _is_svg_only_font(font_name):
+                    if not _colour_hex:
+                        _colour_hex = "#000000"
 
-            zones[zone_name] = {
-                "customer_image": img_path,
-                "text_lines":     _text_lines,
-                "font_name":      font_name,
-                "font_ps_name":   _ps_name,
-                "font_family":    _ps_family,
-                "font_style":     _ps_style,
-                "colour_hex":     _colour_hex,
-                "label":          make_zone_label(zone_name, row_sku),
-                "zone_w_px":      zone_w,
-                "zone_h_px":      zone_h,
-                "preview_image":  (row.get(prev_col) or None),
-            }
+                _emoji_text_path = None
+
+                zones[zone_key] = {
+                    "customer_image":   img_path,
+                    "emoji_text_image": _emoji_text_path,
+                    "text_lines":       _text_lines,
+                    "font_name":      font_name,
+                    "font_ps_name":   _ps_name,
+                    "font_family":    _ps_family,
+                    "font_style":     _ps_style,
+                    "colour_hex":     _colour_hex,
+                    "label":          make_zone_label(zone_key.replace("_", " "), row_sku),
+                    "zone_w_px":      zone_w,
+                    "zone_h_px":      zone_h,
+                    "preview_image":  (row.get(prev_col) or None),
+                }
 
         if zones:
-            multi_items.append({"zones": zones, "sku": row_sku})
-            log(f"  Multi-item built: {row_sku} zones={list(zones.keys())}", "INFO")
+            qty = max(1, int(row.get("Quantity") or 1))
+            for _ in range(qty):
+                multi_items.append({"zones": zones, "sku": row_sku})
+            log(f"  Multi-item built: {row_sku} qty={qty} zones={list(zones.keys())}", "INFO")
 
     if not multi_items:
         return False, "No zones found across all items"
@@ -408,9 +387,11 @@ def _build_psd_multi_via_photoshop(order_id, group_rows, out_path, force_bg_remo
                quantity=1,
                multi_items=multi_items)
 
-    timeout = 600 * len(group_rows)
+    timeout = 600 * len(multi_items)
     success = _ps_wait(order_id, timeout_sec=timeout, use_uxp=True)
     if success:
+        if not os.path.isfile(out_path):
+            return False, f"UXP reported done but output file missing: {out_path}"
         return True, out_path
     return False, "Photoshop UXP timed out or errored"
 
@@ -419,7 +400,7 @@ def _build_psd_multi_via_photoshop(order_id, group_rows, out_path, force_bg_remo
 # Database connection is centralised in db.py (reads from .env).
 
 # Paths — override any of these in your .env file
-_base         = os.environ.get("VARSANY_BASE",    r"C:\Varsany")
+_base         = os.environ.get("VARSANY_BASE",    r"C:\gimpTest")
 FONT_FOLDERS  = [os.path.join(_base, "Fonts")] + \
                 [p.strip() for p in os.environ.get("VARSANY_FONTS_EXTRA", r"W:\fonts").split(",") if p.strip()] + \
                 [r"C:\Windows\Fonts",  # system-wide fonts
@@ -578,46 +559,49 @@ FONT_ALIASES = {
     "russoone":         "russooneregular",
     "ultra":            "ultraregular",
     "verdana":          "verdana",
-    # Premium texture fonts (database name → FONT_INDEX key)
-    "texturefont":      "smartkids",
-    "texture font":     "smartkids",
-    "texture":          "smartkids",
-    "blockfont":        "colorfulblocks",
-    "block font":       "colorfulblocks",
-    "colorfulblock":    "colorfulblocks",
-    "paintfont":        "paintsplashesrainbow",
-    "paint font":       "paintsplashesrainbow",
-    "paintsplashes":    "paintsplashesrainbow",
-    "mermaidfont":      "wavemermaid",
-    "mermaid font":     "wavemermaid",
-    "mermaid":          "wavemermaid",
-    "mermaidregular":   "wavemermaid",
-    "reflectionfont":   "refractionray",
-    "reflection font":  "refractionray",
-    "reflection":       "refractionray",
-    "refractionray":    "refractionray",
-    "refractionrayregular": "refractionray",
-    "camofont":         "camoblock",
-    "camo font":        "camoblock",
-    "camo":             "camoblock",
-    "camoblockregular": "camoblock",
-    "spideyfont":       "spiderweb",
-    "spidey font":      "spiderweb",
-    "spidey":           "spiderweb",
-    "spiderwebregular": "spiderweb",
-    "cozyfont":         "cozywinter",
-    "cozy font":        "cozywinter",
-    "cozy":             "cozywinter",
-    "cozywinterregular": "cozywinter",
-    "footballfont":     "soccerarmy",
-    "football font":    "soccerarmy",
-    "football":         "soccerarmy",
-    "footballregular":  "soccerarmy",
-    "flowerfont":       "tropicalflower",
-    "flower font":      "tropicalflower",
-    "flower":           "tropicalflower",
-    "tropicalflower":   "tropicalflower",
-    "tropicalflowerregular": "tropicalflower",
+    # Premium texture fonts — DB/Amazon display name → FONT_INDEX key.
+    # Left side is the normalised form (lowercase, no spaces/hyphens/underscores).
+    # Amazon display name  →  what designers call it  →  key
+    "texturefont":            "smartkids",    # "Texture font"   → Smart Kids
+    "texture":                "smartkids",
+    "smartkids":              "smartkids",
+    "smartkidsregular":       "smartkids",
+    "blockfont":              "colorfulblocks",  # "Block font"  → Colorful Block
+    "colorfulblock":          "colorfulblocks",
+    "colorfulblocks":         "colorfulblocks",
+    "colorfulblocksregular":  "colorfulblocks",
+    "paintfont":              "paintsplashesrainbow",  # "Paint font" → Paint Splashes
+    "paintsplashes":          "paintsplashesrainbow",
+    "paintsplashesrainbow":   "paintsplashesrainbow",
+    "paintsplashesrainbowregular": "paintsplashesrainbow",
+    "mermaidfont":            "wavemermaid",   # "Mermaid font" → Mermaid Regular (Wavemermaid)
+    "mermaid":                "wavemermaid",
+    "mermaidregular":         "wavemermaid",
+    "wavemermaid":            "wavemermaid",
+    "wavemermaidregular":     "wavemermaid",
+    "reflectionfont":         "refractionray", # "Reflection font" → RefractionRay Regular
+    "reflection":             "refractionray",
+    "refractionray":          "refractionray",
+    "refractionrayregular":   "refractionray",
+    "camofont":               "camoblock",     # "Camo font"    → Camo Block Regular
+    "camo":                   "camoblock",
+    "camoblock":              "camoblock",
+    "camoblockregular":       "camoblock",
+    "spideyfont":             "spiderweb",     # "Spidey font"  → Spider Web Regular
+    "spidey":                 "spiderweb",
+    "spiderweb":              "spiderweb",
+    "spiderwebregular":       "spiderweb",
+    "cozyfont":               "cozywinter",    # "Cozy font"    → Cozy Winter Regular
+    "cozy":                   "cozywinter",
+    "cozywinter":             "cozywinter",
+    "cozywinterregular":      "cozywinter",
+    "footballfont":           "football",      # "Football font" → Football Regular (FOOTBALL.OTF)
+    "football":               "football",
+    "footballregular":        "football",
+    "flowerfont":             "tropicalflower",  # "Flower font" → Tropical Flower Regular
+    "flower":                 "tropicalflower",
+    "tropicalflower":         "tropicalflower",
+    "tropicalflowerregular":  "tropicalflower",
     # Vinyl — TTF is installed
     "vinyl":            "vinylfont",
     "vinylFont":        "vinylfont",
@@ -653,7 +637,7 @@ print(f"  Fonts indexed: {list(FONT_INDEX.keys())}")
 # Photoshop matches fonts by PostScript name — wrong name = Myriad Pro fallback.
 PS_FONT_MAP = {
     # Standard web/system fonts
-    "arial":                ("ArialMT",               "Arial",            "Regular"),
+    "arial":                ("Arial-BoldMT",           "Arial",            "Bold"),
     "arialbold":            ("Arial-BoldMT",           "Arial",            "Bold"),
     "helvetica":            ("Helvetica",              "Helvetica",        "Regular"),
     "helveticabold":        ("Helvetica-Bold",         "Helvetica",        "Bold"),
@@ -692,11 +676,11 @@ PS_FONT_MAP = {
     "colorfulblocks":       ("ColorfulBlocksRegular",   "Colorful Blocks",       "Regular"),
     "paintsplashesrainbow": ("PaintSplashesRainbow",    "Paint Splashes Rainbow","Regular"),
     "wavemermaid":          ("WavemermaidRegular",       "Wavemermaid",           "Regular"),
-    "refractionray":        ("RefractionRayRegular",    "Refraction Ray",        "Regular"),
-    "camoblock":            ("CamoBlockRegular",        "Camoblock",             "Regular"),
+    "refractionray":        ("RefractionRayRegular",    "RefractionRay",         "Regular"),
+    "camoblock":            ("CamoBlockRegular",        "Camo Block",            "Regular"),
     "spiderweb":            ("SpiderWebRegular",        "Spider Web",            "Regular"),
     "cozywinter":           ("CozyWinterRegular",       "Cozy Winter",           "Regular"),
-    "soccerarmy":           ("SoccerArmyVer2",          "Soccer Army",           "Ver2"),
+    "football":             ("FootBallRegular",          "FootBall",              "Regular"),
     "tropicalflower":       ("TropicalFlowerRegular",   "Tropical Flower",       "Regular"),
 }
 
@@ -716,13 +700,13 @@ def get_ps_font(db_font_name):
         if norm.startswith(key) or key.startswith(norm):
             return PS_FONT_MAP[key]
     log(f"  get_ps_font: no PS name for '{db_font_name}' (norm='{norm}') — using Arial", "WARN")
-    return ("ArialMT", "Arial", "Regular")
+    return ("Arial-BoldMT", "Arial", "Bold")
 
 # Keys in FONT_INDEX that belong to premium texture/specialty fonts
 PREMIUM_FONT_KEYS = {
     "smartkids", "colorfulblocks", "paintsplashesrainbow",
     "wavemermaid", "refractionray", "camoblock", "spiderweb",
-    "cozywinter", "soccerarmy", "tropicalflower",
+    "cozywinter", "football", "tropicalflower",
 }
 
 # Per-font tracking multiplier applied to every hmtx advance width.
@@ -738,7 +722,7 @@ FONT_TRACKING = {
     "smartkids": 0.72,
     # Cozy Winter font: SVG artwork fills ~57.8% of advance, min-safe=0.599 (Chrome measurement A-Z).
     "cozywinter": 0.61,
-    # camoblock, colorfulblocks, soccerarmy, paintsplashesrainbow, wavemermaid,
+    # camoblock, colorfulblocks, football, paintsplashesrainbow, wavemermaid,
     # spiderweb: artwork fills full advance → 1.0 (no entry = default).
 }
 
@@ -801,7 +785,7 @@ FONT_CHAR_METRICS = {
         "digit":   1.0,
         "special": 1.0,
     },
-    "soccerarmy": {
+    "football": {
         "upper":   1.0,
         "lower":   1.0,
         "digit":   1.013,   # within 2% — skipped
@@ -877,7 +861,7 @@ PRODUCT_CANVAS = {
     # Accessories
     "buckethat":      {"front": (cm_to_px(11), cm_to_px(4))},
     "beanie":         {"front": (cm_to_px(9.5),cm_to_px(4.5))},
-    "socks":          {"front": (cm_to_px(6),  cm_to_px(12))},
+    "socks":          {"front": (cm_to_px(6),  cm_to_px(6))},   # one sock = 6×6cm; doubled per-pair below
     "seatbelt":       {"front": (cm_to_px(18), cm_to_px(4))},
     "footballshorts": {"front": (756,          1134)},
     # Baby / Kids
@@ -945,6 +929,10 @@ SKU_MAP = [
     ("AnyTxtSlip",                    "slipper"),
     # Socks
     ("AnyTxtSocks",                   "socks"),
+    # Women's vest (adult 30×30cm — same canvas as adult tee)
+    ("AnytxtWmn01_",                  "adulttshirt"),
+    # Golf Towel
+    ("AnyTxtTwl_",                    "golftowel"),
     # Generic AnyTxt catch-all — MUST stay after all specific AnyTxt* entries above
     ("AnyTxt",                        "adulttshirt"),
     # Cushion
@@ -962,12 +950,19 @@ SKU_MAP = [
     # Sweatshirt (same canvas as hoodie)
     ("MenSwetShirt_",                 "adulthoodie"),
     ("WmnSwetShirt_",                 "adulthoodie"),
+    ("AdultSwetShirt",                "adulttshirt"),   # 30×30 — same canvas as adult tee
     # Knitting bag variant
     ("Knitting",                      "knittingbag"),
     # Pyjama / sleepsuit
     ("IWakeup_",                      "sleepsuit"),
     # Football shorts
     ("FootballShorts_",               "footballshorts"),
+    # PE Bag (22×24 — same canvas as string bag)
+    ("FBall01PEBag",                  "stringbag"),
+    # Hand Towel (17×17 — same canvas as golf towel)
+    ("HandAnyTxtTwl",                 "golftowel"),
+    # Legsuit (15×17 — same canvas as baby vest)
+    ("AnytxtLegsuit",                 "babyvest"),
 ]
 
 def _validate_sku_map():
@@ -1069,9 +1064,30 @@ def parse_image_json(json_str):
     except:
         return []
 
-def _parse_font_json(fonts_raw):
+def resolve_zone_images(row, use_topaz, topaz_col, json_col, plain_col):
+    """Return list of image filenames for a zone (front/back/pocket/sleeve), Topaz-first.
+    Falls back to the multi-image *ImageJSON column (e.g. PocketImageJSON — holds
+    Image1/Image2 for the "pocket left + right" combo), then the single plain column."""
+    if use_topaz:
+        v = (row.get(topaz_col) or "").strip()
+        if v:
+            if v.startswith("{"):
+                imgs = parse_image_json(v)
+                if imgs:
+                    return imgs
+            else:
+                return [v]
+    imgs = parse_image_json(row.get(json_col) or "")
+    if imgs:
+        return imgs
+    plain = (row.get(plain_col) or "").strip()
+    return [plain] if plain else []
+
+def _parse_font_json(fonts_raw, side=None):
     """Parse FrontFonts/BackFonts value. Returns (font_name, is_premium).
     Handles both valid JSON (double quotes) and Python dict repr (single quotes).
+    side: "Left" or "Right" — for PocketFonts, which uses {"Left Font":..,"Right Font":..}
+    instead of {"NormalFont":..}.
     """
     if not fonts_raw:
         return "Arial Bold", False
@@ -1092,28 +1108,47 @@ def _parse_font_json(fonts_raw):
                 pass
         if d is not None:
             premium = (d.get("PremiumFont") or "").strip()
-            normal  = (d.get("NormalFont")  or "").strip()
+            normal  = (d.get(f"{side} Font") or "").strip() if side else (d.get("NormalFont") or "").strip()
             if premium and premium.lower() not in ("no", "none", ""):
-                return premium, True
+                # Only use premium font if it resolves to a known font.
+                # Apply FONT_ALIASES first so Amazon display names ("Football Regular",
+                # "Mermaid Regular", etc.) resolve to their canonical key ("football",
+                # "wavemermaid", etc.) before checking PS_FONT_MAP / PREMIUM_FONT_KEYS.
+                _pkey = premium.lower().replace(" ", "").replace("-", "").replace("_", "")
+                _resolved = FONT_ALIASES.get(_pkey, _pkey)
+                if _resolved in PS_FONT_MAP or _resolved in PREMIUM_FONT_KEYS:
+                    return premium, True
             return normal or "Arial", False
     return s or "Arial", False
 
-def parse_font(fonts_raw):
-    """Return font name to use (premium takes priority over normal)."""
-    return _parse_font_json(fonts_raw)[0]
+def parse_font(fonts_raw, side=None):
+    """Return font name to use (premium takes priority over normal).
+    side: "Left" or "Right" — for PocketFonts' per-side font keys."""
+    return _parse_font_json(fonts_raw, side)[0]
 
-def parse_is_premium_font(fonts_raw):
+def parse_is_premium_font(fonts_raw, side=None):
     """Return True if this zone uses a premium font."""
-    return _parse_font_json(fonts_raw)[1]
+    return _parse_font_json(fonts_raw, side)[1]
 
-def parse_colour(colours_raw):
+def parse_colour(colours_raw, side=None):
+    """side: "Left" or "Right" — for PocketColours' per-side colour keys."""
     if not colours_raw:
         return "#ffffff"
     s = colours_raw.strip()
     if s.startswith("{"):
         try:
             d = json.loads(s)
-            return d.get("Colour1") or d.get("colour1") or "#ffffff"
+            if side and d.get(f"{side} Colour"):
+                return d[f"{side} Colour"]
+            # Try known keys first, then fall back to scanning all values for any
+            # hex colour — handles any future Amazon JSON schema changes automatically.
+            for key in ("Colour1", "colour1", "Left Colour", "left colour",
+                        "Right Colour", "right colour"):
+                if d.get(key):
+                    return d[key]
+            for val in d.values():
+                if isinstance(val, str) and val.startswith("#") and len(val) in (4, 7):
+                    return val
         except:
             pass
     if s.startswith("#"):
@@ -1238,7 +1273,10 @@ def is_multizone_row(row):
     return active > 1
 
 EMBROIDERY_SKU_PREFIXES = (
-    "HandTwlLwnBowl",   # lawn bowls hand towel — embroidery, not DTF
+    "HandTwlLwnBowl",           # lawn bowls hand towel — embroidery, not DTF
+    "Wellis_Pink_Purple",       # not processed by automation
+    "NumPlateRectangle_keychain", # not processed by automation
+    "VARBathPer1002",           # not processed by automation
 )
 
 def is_emb_rhine_row(row):
@@ -2855,10 +2893,10 @@ def image_bg_matches_garment(img_rgba, garment_rgb, tolerance=40):
                 interior_px.append(arr[x, y])
         if interior_px:
             interior_match = sum(1 for px in interior_px if matches(px)) / len(interior_px)
-            # 80%+ interior matches → almost entirely background colour, no real design
-            # visible (e.g. Kingdom poster with white smoke/mist throughout).
-            # Badges/logos with white sections inside score 50-65% — still remove those.
-            if interior_match >= 0.80:
+            # 95%+ interior matches → almost entirely background colour, no real design
+            # visible (e.g. completely blank canvas). Wide logos on white backgrounds
+            # score 80-90% — still remove those (threshold raised from 80→95).
+            if interior_match >= 0.95:
                 return False
 
     return True
@@ -3062,7 +3100,12 @@ def _build_psd_semi_custom(order_id, rows, out_path):
             items             = [],        # flat text_replacements handles everything
         )
 
-        timeout = 120 * max(1, k)
+        # Semi-custom templates are large (built up to 30,000px tall) — opening,
+        # rendering, and saving one routinely takes several minutes regardless of
+        # item count. 120s/item was too short and made Photoshop's real, successful
+        # save get falsely marked as a timeout before it even finished, causing the
+        # order to retry and produce a duplicate output file next pass.
+        timeout = max(600, 150 * k)
         success = wait_for_completion(order_id, timeout_sec=timeout)
         if not success:
             return False, f"Photoshop job timed out or errored (batch {batch_idx + 1})"
@@ -3375,15 +3418,25 @@ def build_psd_for_order(order_id, row, out_path, no_bg_remove=False, force_bg_re
 
 
 def rows_have_same_design(rows):
+    """True when all rows share the same customisation content (text/fonts/colours).
+    Image filenames are intentionally excluded — Amazon stores the same customer
+    image under different filenames for each size variant in a multi-size order."""
     if len(rows) <= 1:
         return True
     def sig(row):
         return (
             (row.get("FrontText") or "").strip(),
-            (row.get("FrontImageJSON") or "").strip(),
-            (row.get("FrontImage") or "").strip(),
             (row.get("FrontFonts") or "").strip(),
             (row.get("FrontColours") or "").strip(),
+            (row.get("BackText") or "").strip(),
+            (row.get("BackFonts") or "").strip(),
+            (row.get("BackColours") or "").strip(),
+            (row.get("PocketText") or "").strip(),
+            (row.get("PocketFonts") or "").strip(),
+            (row.get("PocketColours") or "").strip(),
+            (row.get("SleeveText") or "").strip(),
+            (row.get("SleeveFonts") or "").strip(),
+            (row.get("SleeveColours") or "").strip(),
         )
     first = sig(rows[0])
     return all(sig(r) == first for r in rows)
@@ -3583,7 +3636,12 @@ def fetch_orders(limit=None, order_id_filter=None, sku_filter=None, multizone=Fa
     if reprocess:
         where = "1=1"   # skip all filters when reprocessing
     else:
-        where = ("(d.Topaz_Processed = 0 OR d.Topaz_Processed IS NULL)")
+        # Already-shipped orders don't need a PSD anymore — they went out through
+        # some other route. Excluding them stops the daemon wasting cycles on
+        # stale backlog (e.g. an entire day's worth of orders that shipped
+        # without ever needing automation output) instead of newer, still-needed ones.
+        where = ("(d.Topaz_Processed = 0 OR d.Topaz_Processed IS NULL)"
+                 " AND (o.IsShipped = 0 OR o.IsShipped IS NULL)")
     if order_id_filter:
         if isinstance(order_id_filter, list):
             # Flatten any comma-separated values in the list
@@ -3818,9 +3876,10 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
         log("Nothing to process.")
         return
 
-    ok_count   = 0
-    fail_count = 0
-    skip_count = 0
+    ok_count      = 0
+    fail_count    = 0
+    skip_count    = 0
+    sweep_failures = []  # collected this sweep: [{order_id, sku, reason}]
 
     nas_uploader = None
     if upload_nas:
@@ -4039,16 +4098,17 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
                 # USE_PHOTOSHOP_BRIDGE not set → use Python PSD writer only.
                 # No cross-fallback between engines.
                 if _USE_PS_BRIDGE:
-                    if len(group_rows) == 1 or rows_have_same_design(group_rows):
-                        # Single item or identical designs → stack as quantity on one canvas
-                        total_qty = sum(max(1, int(r.get("Quantity") or 1)) for r in group_rows)
+                    if len(group_rows) == 1:
+                        # Single item → one PSD with qty copies stacked
+                        qty = max(1, int(first_row.get("Quantity") or 1))
                         ok, msg = _build_psd_via_photoshop(order_id, first_row, out_path,
                                                            force_bg_remove=force_bg_remove,
-                                                           quantity_override=total_qty if total_qty > 1 else None)
+                                                           quantity_override=qty if qty > 1 else None)
                         if not ok:
                             log(f"  UXP Bridge FAILED: {msg}", "FAIL")
                     else:
-                        # Different designs → stack all items on ONE canvas with per-item zones
+                        # Multiple items (same or different design) → always one combined PSD,
+                        # each item labeled with its own SKU/size and stacked by its own qty
                         ok, msg = _build_psd_multi_via_photoshop(order_id, group_rows, out_path,
                                                                   force_bg_remove=force_bg_remove)
                         if not ok:
@@ -4073,10 +4133,12 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
             else:
                 log(f"  FAIL  {msg}", "FAIL")
                 fail_count += 1
+                sweep_failures.append({"order_id": order_id, "sku": skus_str, "reason": msg})
         except Exception as e:
             log(f"  ERROR  {e}", "ERROR")
             log(traceback.format_exc()[-400:], "ERROR")
             fail_count += 1
+            sweep_failures.append({"order_id": order_id, "sku": skus_str, "reason": f"Exception: {e}"})
 
         if i % 50 == 0:
             log(f"--- Progress {i}/{total_orders}  ok={ok_count}  fail={fail_count} ---")
@@ -4084,6 +4146,7 @@ def run_batch(limit=None, order_id_filter=None, dry_run=False, sku_filter=None, 
     log("=" * 60)
     log(f"DONE  {ok_count} OK  |  {fail_count} FAILED  |  {skip_count} SKIPPED (Emb & Rhine)  |  Output: {out_dir}")
     log("=" * 60)
+    return sweep_failures
 
 
 if __name__ == "__main__":
@@ -4102,7 +4165,7 @@ if __name__ == "__main__":
     parser.add_argument("--b2",            action="store_true",    help="Upload finished PSDs to Backblaze B2 after export")
     parser.add_argument("--no-bg-remove",    action="store_true",    help="Skip background removal for all zones")
     parser.add_argument("--force-bg-remove", action="store_true",    help="Force background removal for all zones, bypassing auto-detection")
-    parser.add_argument("--output",        type=str, default=None, help="Override output folder e.g. C:\\Varsany\\Output\\test1")
+    parser.add_argument("--output",        type=str, default=None, help="Override output folder e.g. C:\\gimpTest\\Output\\test1")
     parser.add_argument("--font-filter",   type=str, default=None, help="Comma-separated font name substrings e.g. 'Mermaid Font,Block Font'")
     parser.add_argument("--hours",         type=int, default=None, help="Only process orders added in the last N hours e.g. --hours 2")
     parser.add_argument("--with-images",   action="store_true",    help="Only process orders that have a customer image upload")
@@ -4134,13 +4197,52 @@ if __name__ == "__main__":
     )
 
     if args.daemon:
-        import time
+        import time, json as _json
         log(f"Daemon started — polling every {args.interval}s.  Press Ctrl+C to stop.")
+        _all_failures     = {}         # order_id → failure record (persists across sweeps all day)
+        _last_report_time = 0          # force first write immediately after first sweep
+        _REPORT_INTERVAL  = 600        # 10 minutes
+
         while True:
             try:
-                run_batch(**batch_kwargs)
+                sweep_fails = run_batch(**batch_kwargs) or []
+                _now_str = datetime.now().isoformat(timespec="seconds")
+                for f in sweep_fails:
+                    oid = f["order_id"]
+                    if oid in _all_failures:
+                        _all_failures[oid]["last_failed_at"] = _now_str
+                        _all_failures[oid]["fail_count"] += 1
+                        _all_failures[oid]["reason"] = f["reason"]  # keep latest reason
+                    else:
+                        _all_failures[oid] = {
+                            "order_id":      oid,
+                            "sku":           f["sku"],
+                            "reason":        f["reason"],
+                            "first_failed_at": _now_str,
+                            "last_failed_at":  _now_str,
+                            "fail_count":    1,
+                        }
             except Exception as _e:
                 log(f"Daemon run error: {_e}", "ERROR")
+
+            # Write failure report every 10 minutes
+            if time.time() - _last_report_time >= _REPORT_INTERVAL:
+                _last_report_time = time.time()
+                _date_str  = datetime.now().strftime("%Y-%m-%d")
+                _report_dir = os.path.join(OUTPUT_FOLDER, _date_str)
+                os.makedirs(_report_dir, exist_ok=True)
+                _report_path = os.path.join(_report_dir, "failed_orders.json")
+                _report = {
+                    "generated_at":   datetime.now().isoformat(timespec="seconds"),
+                    "date":           _date_str,
+                    "total_failures": len(_all_failures),
+                    "failed_orders":  sorted(_all_failures.values(), key=lambda x: x["first_failed_at"]),
+                }
+                with open(_report_path, "w", encoding="utf-8") as _fh:
+                    _json.dump(_report, _fh, indent=2, ensure_ascii=False)
+                if _all_failures:
+                    log(f"Failure report updated: {_report_path}  ({len(_all_failures)} orders)")
+
             log(f"Sleeping {args.interval}s...")
             time.sleep(args.interval)
     else:

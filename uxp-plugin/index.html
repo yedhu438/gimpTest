@@ -155,6 +155,38 @@ async function getDocSize(){
   return {w:Math.round(r[0].width._value*res/72), h:Math.round(r[0].height._value*res/72), res};
 }
 
+// Build textStyleRange array: Noto Color Emoji for emoji chars, customer font for everything else.
+// Produces a single editable type layer that shows emojis in their correct colours.
+function buildTextStyleRanges(text, normPS, normFamily, normStyle, colourProp, sizePt) {
+  // Matches emoji sequences: base + optional variation selector + optional ZWJ chains
+  const EMOJI_RE  = /\p{Extended_Pictographic}[︎️]?(‍\p{Extended_Pictographic}[︎️]?)*/gu;
+  const EMOJI_PS  = "NotoColorEmoji";
+  const EMOJI_FAM = "Noto Color Emoji";
+  const EMOJI_STY = "Regular";
+  const normSty  = {fontPostScriptName:normPS, fontName:normFamily, fontStyleName:normStyle,
+                    size:{_unit:"pointsUnit",_value:sizePt}, ...colourProp,
+                    autoKern:{_enum:"autoKern",_value:"metricsKern"}, tracking:0};
+  const emojiSty = {fontPostScriptName:EMOJI_PS, fontName:EMOJI_FAM, fontStyleName:EMOJI_STY,
+                    size:{_unit:"pointsUnit",_value:sizePt}};
+  const ranges = [];
+  let lastEnd = 0, match;
+  while ((match = EMOJI_RE.exec(text)) !== null) {
+    if (match.index > lastEnd)
+      ranges.push({_obj:"textStyleRange", from:lastEnd, to:match.index,
+                   textStyle:{_obj:"textStyle", ...normSty}});
+    ranges.push({_obj:"textStyleRange", from:match.index, to:match.index + match[0].length,
+                 textStyle:{_obj:"textStyle", ...emojiSty}});
+    lastEnd = match.index + match[0].length;
+  }
+  if (lastEnd < text.length)
+    ranges.push({_obj:"textStyleRange", from:lastEnd, to:text.length,
+                 textStyle:{_obj:"textStyle", ...normSty}});
+  if (ranges.length === 0)
+    return [{_obj:"textStyleRange", from:0, to:text.length,
+             textStyle:{_obj:"textStyle", ...normSty}}];
+  return ranges;
+}
+
 // Add black label text at given Y offset (top of label strip)
 async function addLabel(labelText, yTop, canvasW){
   await bp([{_obj:"make",_target:[{_ref:"textLayer"}],
@@ -264,56 +296,13 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
     let sizePt = 100;
 
     if(useSvgColour){
-      // SVG colour fonts (Colorful Blocks, Smart Kids etc.) cannot render in CMYK mode —
-      // PS substitutes Myriad Pro. Fix: render in a temporary RGB document, rasterize,
-      // copy and paste back as a pixel layer into the main CMYK document.
-      await bp([{_obj:"make",new:{_obj:"document",
-        width:{_unit:"pixelsUnit",_value:zoneW},
-        height:{_unit:"pixelsUnit",_value:Math.max(zoneH,1500)},
-        resolution:{_unit:"densityUnit",_value:320},
-        mode:{_class:"RGBColorMode"},
-        fill:{_enum:"fill",_value:"transparent"},
-        depth:8
-      }}]);
+      // Premium SVG colour fonts (Football, Camo, Smart Kids etc.):
+      // Create editable type layer directly in the main doc — no colour override,
+      // Photoshop renders the font's built-in SVG texture natively.
       await bp([{_obj:"make",_target:[{_ref:"textLayer"}],
         using:{_obj:"textLayer",textKey:text,
           textClickPoint:{_obj:"paint",horizontal:{_unit:"percentUnit",_value:50},vertical:{_unit:"percentUnit",_value:50}},
-          textStyleRange:[{_obj:"textStyleRange",from:0,to:text.length,
-            textStyle:{_obj:"textStyle",fontPostScriptName:fontPS,fontName:fontFamily,fontStyleName:fontStyle,
-              size:{_unit:"pointsUnit",_value:100},
-              autoKern:{_enum:"autoKern",_value:"metricsKern"},tracking:0}
-          }],
-          paragraphStyleRange:[{_obj:"paragraphStyleRange",from:0,to:text.length,
-            paragraphStyle:{_obj:"paragraphStyle",alignment:{_enum:"alignmentType",_value:"center"}}
-          }]
-        }
-      }]);
-      for(let pass=0;pass<2;pass++){
-        const lb=await getLayerBounds();
-        sizePt=Math.min(Math.max(sizePt*(targetPx/(lb.w||1)),20),400);
-        await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},
-          to:{_obj:"textLayer",
-            textStyleRange:[{_obj:"textStyleRange",from:0,to:text.length,
-              textStyle:{_obj:"textStyle",fontPostScriptName:fontPS,fontName:fontFamily,fontStyleName:fontStyle,
-                size:{_unit:"pointsUnit",_value:sizePt}}}]
-          }
-        }]);
-      }
-      await bp([{_obj:"rasterizeLayer",null:{_ref:[{_ref:"layer",_enum:"ordinal",_value:"targetEnum"}]}}]);
-      await bp([{_obj:"selectAll"}]);
-      await bp([{_obj:"copyMerged"}]);
-      await bp([{_obj:"close",saving:{_enum:"yesNo",_value:"no"}}]);
-      await bp([{_obj:"paste",antiAlias:{_enum:"antiAlias",_value:"antiAliasNone"},as:{_obj:"pixel"}}]);
-      await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:textLayerName}}]);
-    } else {
-      await bp([{_obj:"make",_target:[{_ref:"textLayer"}],
-        using:{_obj:"textLayer",textKey:text,
-          textClickPoint:{_obj:"paint",horizontal:{_unit:"percentUnit",_value:50},vertical:{_unit:"percentUnit",_value:50}},
-          textStyleRange:[{_obj:"textStyleRange",from:0,to:text.length,
-            textStyle:{_obj:"textStyle",fontPostScriptName:fontPS,fontName:fontFamily,fontStyleName:fontStyle,
-              size:{_unit:"pointsUnit",_value:100},...colourProp,
-              autoKern:{_enum:"autoKern",_value:"metricsKern"},tracking:0}
-          }],
+          textStyleRange:buildTextStyleRanges(text,fontPS,fontFamily,fontStyle,{},100),
           paragraphStyleRange:[{_obj:"paragraphStyleRange",from:0,to:text.length,
             paragraphStyle:{_obj:"paragraphStyle",alignment:{_enum:"alignmentType",_value:"center"}}
           }]
@@ -325,9 +314,27 @@ async function processZone(doc, zone, data, imgEntry, yOffset, zoneW, zoneH, res
         sizePt=Math.min(Math.max(sizePt*(targetPx/(lb.w||1)),20),400);
         await bp([{_obj:"set",null:{_ref:[{_ref:"layer",_name:textLayerName}]},
           to:{_obj:"textLayer",textKey:text,
-            textStyleRange:[{_obj:"textStyleRange",from:0,to:text.length,
-              textStyle:{_obj:"textStyle",fontPostScriptName:fontPS,fontName:fontFamily,fontStyleName:fontStyle,
-                size:{_unit:"pointsUnit",_value:sizePt},...colourProp}}]
+            textStyleRange:buildTextStyleRanges(text,fontPS,fontFamily,fontStyle,{},sizePt)
+          }
+        }]);
+      }
+    } else {
+      await bp([{_obj:"make",_target:[{_ref:"textLayer"}],
+        using:{_obj:"textLayer",textKey:text,
+          textClickPoint:{_obj:"paint",horizontal:{_unit:"percentUnit",_value:50},vertical:{_unit:"percentUnit",_value:50}},
+          textStyleRange:buildTextStyleRanges(text,fontPS,fontFamily,fontStyle,colourProp,100),
+          paragraphStyleRange:[{_obj:"paragraphStyleRange",from:0,to:text.length,
+            paragraphStyle:{_obj:"paragraphStyle",alignment:{_enum:"alignmentType",_value:"center"}}
+          }]
+        }
+      }]);
+      await bp([{_obj:"set",null:{_ref:[{_enum:"ordinal",_value:"targetEnum",_ref:"layer"}]},to:{_obj:"layer",name:textLayerName}}]);
+      for(let pass=0;pass<2;pass++){
+        const lb=await getLayerBounds();
+        sizePt=Math.min(Math.max(sizePt*(targetPx/(lb.w||1)),20),400);
+        await bp([{_obj:"set",null:{_ref:[{_ref:"layer",_name:textLayerName}]},
+          to:{_obj:"textLayer",textKey:text,
+            textStyleRange:buildTextStyleRanges(text,fontPS,fontFamily,fontStyle,colourProp,sizePt)
           }
         }]);
       }
@@ -374,7 +381,9 @@ async function processJob(jobEntry){
   let tplEntry, imgEntries={}, outEntry;
   const multiItemImgEntries = [];  // per-item image entries for multi_items orders
   try{
-    tplEntry = await getEntry(job.template);
+    // Semi-custom jobs (real jersey templates with named text layers) still need a
+    // file. Standard jobs create a blank canvas from scratch — no file, no lookup.
+    if(job.template){ tplEntry = await getEntry(job.template); }
     for(const [zone,data] of Object.entries(job.zones)){
       if(data.customer_image) imgEntries[zone]=await getImageEntry(data.customer_image);
     }
@@ -401,10 +410,26 @@ async function processJob(jobEntry){
   await core.executeAsModal(async()=>{
     let doc=null;
     try{
-      const tplToken=fs.createSessionToken(tplEntry);
-      await bp([{_obj:"open",null:{_path:tplToken,_kind:"local"},_options:{dialogOptions:"dontDisplay"}}]);
-      doc=app.activeDocument;
-      log("Opened: "+doc.name);
+      if(tplEntry){
+        // Semi-custom: real template file with pre-built named layers (jersey crest, "Player"/"08" text).
+        const tplToken=fs.createSessionToken(tplEntry);
+        await bp([{_obj:"open",null:{_path:tplToken,_kind:"local"},_options:{dialogOptions:"dontDisplay"}}]);
+        doc=app.activeDocument;
+        log("Opened: "+doc.name);
+      } else {
+        // Standard: blank canvas created from scratch at the exact product/zone size —
+        // no template file to keep in sync, no "No template found" failure mode.
+        doc = await app.documents.add({
+          width:      job.canvas_w_px  || 3780,
+          height:     job.canvas_h_px  || 3780,
+          resolution: job.dpi || 320,
+          mode:       constants.NewDocumentMode.CMYK,
+          fill:       constants.DocumentFill.TRANSPARENT,
+          depth:      8,
+          profile:    "U.S. Web Coated (SWOP) v2"
+        });
+        log("Created blank canvas: "+job.canvas_w_px+"x"+job.canvas_h_px+"px");
+      }
 
       const {w:docW, h:docH, res} = await getDocSize();
 
@@ -696,11 +721,7 @@ async function processJob(jobEntry){
               async function applyText(sizePt){
                 await bp([{_obj:"set",null:{_ref:[{_ref:"layer",_name:"CustomerText_"+zone}]},
                   to:{_obj:"textLayer",textKey:text,
-                    textStyleRange:[{_obj:"textStyleRange",from:0,to:text.length,
-                      textStyle:{_obj:"textStyle",fontPostScriptName:initFontPS2,fontName:initFamily2,fontStyleName:initStyle2,
-                        size:{_unit:"pointsUnit",_value:sizePt},...colourProp,
-                        autoKern:{_enum:"autoKern",_value:"metricsKern"},tracking:0}
-                    }],
+                    textStyleRange:buildTextStyleRanges(text,initFontPS2,initFamily2,initStyle2,colourProp,sizePt),
                     paragraphStyleRange:[{_obj:"paragraphStyleRange",from:0,to:text.length,
                       paragraphStyle:{_obj:"paragraphStyle",alignment:{_enum:"alignmentType",_value:"center"}}
                     }]
@@ -710,10 +731,7 @@ async function processJob(jobEntry){
               async function applySvgSize(sizePt){
                 await bp([{_obj:"set",null:{_ref:[{_ref:"layer",_name:"CustomerText_"+zone}]},
                   to:{_obj:"textLayer",
-                    textStyleRange:[{_obj:"textStyleRange",from:0,to:text.length,
-                      textStyle:{_obj:"textStyle",fontPostScriptName:fontPS,fontName:fontFamily,fontStyleName:fontStyle,
-                        size:{_unit:"pointsUnit",_value:sizePt}}
-                    }]
+                    textStyleRange:buildTextStyleRanges(text,fontPS,fontFamily,fontStyle,{},sizePt)
                   }
                 }]);
               }

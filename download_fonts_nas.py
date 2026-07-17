@@ -1,4 +1,4 @@
-"""Download all fonts from NAS /Vector Designs/Resources/Fonts to C:\\Varsany\\Fonts\\"""
+﻿"""Download all fonts from NAS /Vector Designs/Resources/Fonts to C:\\\\gimpTest\\\\Fonts\\"""
 import os, requests, urllib3
 urllib3.disable_warnings()
 import sys
@@ -8,7 +8,7 @@ NAS_BASE   = "https://192.168.0.113:5001/webapi"
 NAS_USER   = "varsany_api"
 NAS_PASS   = "Varsany2026"
 NAS_FOLDER = "/Vector Designs/Resources/Fonts"
-LOCAL_DIR  = r"C:\Varsany\Fonts"
+LOCAL_DIR  = r"C:\gimpTest\Fonts"
 
 os.makedirs(LOCAL_DIR, exist_ok=True)
 

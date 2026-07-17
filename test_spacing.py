@@ -1,4 +1,4 @@
-"""Render 'LIKE' with Reflection Font and save collage + glyph crops for inspection."""
+﻿"""Render 'LIKE' with Reflection Font and save collage + glyph crops for inspection."""
 import os, sys, re, subprocess, base64
 import numpy as np
 from PIL import Image
@@ -8,10 +8,10 @@ load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 from fontTools.ttLib import TTFont
 import batch_processor as bp
 
-OUT_DIR = r'C:\Varsany\Output\spacing_test'
+OUT_DIR = r'C:\gimpTest\Output\spacing_test'
 os.makedirs(OUT_DIR, exist_ok=True)
 
-font_path = r'C:\Varsany\Fonts\Refraction Ray.otf'
+font_path = r'C:\gimpTest\Fonts\Refraction Ray.otf'
 ft        = TTFont(font_path)
 upem      = ft['head'].unitsPerEm
 hmtx      = ft['hmtx'].metrics

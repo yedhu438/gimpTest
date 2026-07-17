@@ -1,4 +1,4 @@
-"""
+﻿"""
 Varsany Print Automation � Prototype
 =====================================
 PSD Engine: Pure Python struct writer (zero NumPy, zero psd-tools for writing)
@@ -39,10 +39,10 @@ app.secret_key = "varsany-prototype-2026"
 # --- CONFIG -------------------------------------------------------------------
 # Database connection is centralised in db.py (reads from .env).
 
-UPLOAD_FOLDER = r"C:\Varsany\Uploads"
-OUTPUT_FOLDER = r"C:\Varsany\Output"
-FONTS_FOLDER  = r"C:\Varsany\Fonts"
-TEMP_FOLDER   = r"C:\Varsany\Temp"
+UPLOAD_FOLDER = r"C:\gimpTest\Uploads"
+OUTPUT_FOLDER = r"C:\gimpTest\Output"
+FONTS_FOLDER  = r"C:\gimpTest\Fonts"
+TEMP_FOLDER   = r"C:\gimpTest\Temp"
 
 for _d in [UPLOAD_FOLDER, OUTPUT_FOLDER, FONTS_FOLDER, TEMP_FOLDER]:
     os.makedirs(_d, exist_ok=True)
@@ -1468,7 +1468,7 @@ tr:hover td{background:#1f1f1f}
         </div>
         <div class="two-col">
           <div class="form-group">
-            <label>Font (place .ttf in C:\\Varsany\\Fonts\\)</label>
+            <label>Font (place .ttf in C:\\\\gimpTest\\\\Fonts\\)</label>
             <select name="font">
               <option>Arial</option>
               <option>Arial Bold</option>

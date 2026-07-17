@@ -1,4 +1,4 @@
-"""
+﻿"""
 Creates all product templates by copying adulttshirt.psd and resizing canvas.
 This avoids the PS2026 COM 'Make not available' error.
 """
@@ -7,8 +7,8 @@ sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from product_canvas import PRODUCT_CANVAS
 import win32com.client
 
-TEMPLATE_DIR = r"C:\Varsany\template"
-SOURCE       = r"C:\Varsany\template\adulttshirt.psd"
+TEMPLATE_DIR = r"C:\gimpTest\template"
+SOURCE       = r"C:\gimpTest\template\adulttshirt.psd"
 
 print("Connecting to Photoshop...")
 ps = win32com.client.Dispatch("Photoshop.Application")

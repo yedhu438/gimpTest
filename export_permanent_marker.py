@@ -5,7 +5,7 @@ from db import get_connection
 from pathlib import Path
 
 BASE_URL    = "http://www.crssoft.co.uk/CustomOrderImages/"
-CACHE_DIR   = r"C:\Varsany\Temp\OrderImages"
+CACHE_DIR   = r"C:\gimpTest\Temp\OrderImages"
 PLUGIN_DATA = r"C:\Users\yedhu\AppData\Roaming\Adobe\UXP\PluginsStorage\PHSP\27\Developer\com.varsany.automation.worker\PluginData"
 IMG_DIR     = PLUGIN_DATA + r"\images"
 JOBS_DIR    = PLUGIN_DATA + r"\jobs"

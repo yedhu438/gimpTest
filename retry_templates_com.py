@@ -1,4 +1,4 @@
-"""
+﻿"""
 Retry failed templates — uses Duplicate + Flatten + Resize approach for narrow canvases.
 """
 import sys, time, os
@@ -6,8 +6,8 @@ sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from product_canvas import PRODUCT_CANVAS
 import win32com.client
 
-TEMPLATE_DIR = r"C:\Varsany\template"
-SOURCE       = r"C:\Varsany\template\adulttshirt.psd"
+TEMPLATE_DIR = r"C:\gimpTest\template"
+SOURCE       = r"C:\gimpTest\template\adulttshirt.psd"
 
 # Only retry the failed ones
 RETRY = ["kidstshirt","totebag","stringbag","knittingbag","buckethat","beanie","socks","adulthoodie"]

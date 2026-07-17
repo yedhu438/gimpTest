@@ -1,4 +1,4 @@
-"""
+﻿"""
 download_order_images.py  —  download all customer images for a given OrderID.
 Usage:  python download_order_images.py 205-1289169-6851545
 """
@@ -12,7 +12,7 @@ except ImportError:
 
 BASE_URL = "http://www.crssoft.co.uk/CustomOrderImages/"
 ORDER_ID = sys.argv[1] if len(sys.argv) > 1 else "205-1289169-6851545"
-SAVE_DIR = os.path.join(r"C:\Varsany\Output\OrderImages", ORDER_ID)
+SAVE_DIR = os.path.join(r"C:\gimpTest\Output\OrderImages", ORDER_ID)
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 _srv = os.environ.get("DB_SERVER", r"localhost\SQLEXPRESS")

@@ -1,12 +1,12 @@
-"""
+﻿"""
 Creates combined_template.psd by opening adulttshirt.psd and resizing canvas to 3780x15000
 """
 import sys, time
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 import win32com.client, os
 
-OUTPUT  = r"C:\Varsany\template\combined_template.psd"
-SOURCE  = r"C:\Varsany\template\adulttshirt.psd"
+OUTPUT  = r"C:\gimpTest\template\combined_template.psd"
+SOURCE  = r"C:\gimpTest\template\adulttshirt.psd"
 
 print("Connecting to Photoshop...")
 ps = win32com.client.Dispatch("Photoshop.Application")

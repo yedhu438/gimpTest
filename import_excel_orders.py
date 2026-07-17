@@ -1,4 +1,4 @@
-"""
+﻿"""
 Import both sheets of the test1 Excel into local DB, then kick off the batch processor.
 """
 import openpyxl, pyodbc, os, subprocess, sys
@@ -8,8 +8,8 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from db import get_connection as _db_get_connection
 
-EXCEL_PATH = r"C:\Varsany\Output\test1\UnshippedDTFOrders_04052026_014331.xlsx"
-OUTPUT_DIR = r"C:\Varsany\Output\test1 Export"
+EXCEL_PATH = r"C:\gimpTest\Output\test1\UnshippedDTFOrders_04052026_014331.xlsx"
+OUTPUT_DIR = r"C:\gimpTest\Output\test1 Export"
 DATE_AFTER = "2026-04-30"
 
 def b(v):

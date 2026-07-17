@@ -1,4 +1,4 @@
-"""
+﻿"""
 test_svg_render.py
 ------------------
 Standalone test for the Chrome SVG glyph renderer used in batch_processor.py.
@@ -7,7 +7,7 @@ Renders "TECH C.E.O." with Refraction Ray and saves a PNG showing:
   - a RED horizontal line at the computed baseline
   - a BLUE horizontal line at the bottom of each glyph's bounding box
 
-Output: C:/Varsany/Output/test_svg_render.png
+Output: C:/gimpTest/Output/test_svg_render.png
 Run:
     python test_svg_render.py
 """
@@ -23,14 +23,14 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 # -- CONFIG --------------------------------------------------------------------
-FONT_PATH  = r"C:\Varsany\Fonts\Refraction Ray.otf"
+FONT_PATH  = r"C:\gimpTest\Fonts\Refraction Ray.otf"
 TEST_TEXT  = "TECH C.E.O."
 TRACKING   = 0.92
 CANVAS_W   = 2346   # 85% of 2760px KidsTee front
 
-OUTPUT_DIR = r"C:\Varsany\Output"
+OUTPUT_DIR = r"C:\gimpTest\Output"
 OUTPUT_PNG = os.path.join(OUTPUT_DIR, "test_svg_render.png")
-TEMP_DIR   = r"C:\Varsany\Temp"
+TEMP_DIR   = r"C:\gimpTest\Temp"
 
 CHROME_EXE = None
 for _p in [

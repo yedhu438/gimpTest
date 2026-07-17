@@ -44,6 +44,15 @@ def _clean_zone(zone_name, zone, canvas_w_px, canvas_h_px):
             shutil.copy2(img_src, dest)
         img_path = img_filename
 
+    emoji_src = (zone.get("emoji_text_image") or "").strip()
+    emoji_path = None
+    if emoji_src and os.path.isfile(emoji_src):
+        emoji_filename = Path(emoji_src).name
+        dest_e = ASSETS_DIR / emoji_filename
+        if not dest_e.exists():
+            shutil.copy2(emoji_src, dest_e)
+        emoji_path = emoji_filename
+
     preview_src = (zone.get("preview_image") or "").strip()
     preview_path = None
     if preview_src:
@@ -82,17 +91,18 @@ def _clean_zone(zone_name, zone, canvas_w_px, canvas_h_px):
             preview_path = url_basename
 
     return {
-        "customer_image": img_path,
-        "text_lines":     zone.get("text_lines") or [],
-        "font_name":      zone.get("font_name") or "Arial Bold",
-        "font_ps_name":   zone.get("font_ps_name") or "Arial-BoldMT",
-        "font_family":    zone.get("font_family") or "Arial",
-        "font_style":     zone.get("font_style") or "Bold",
-        "colour_hex":     zone.get("colour_hex") or "#ffffff",
-        "label":          zone.get("label") or zone_name.upper(),
-        "zone_w_px":      zone.get("zone_w_px") or canvas_w_px,
-        "zone_h_px":      zone.get("zone_h_px") or canvas_h_px,
-        "preview_image":  preview_path,
+        "customer_image":   img_path,
+        "emoji_text_image": emoji_path,
+        "text_lines":       zone.get("text_lines") or [],
+        "font_name":        zone.get("font_name") or "Arial Bold",
+        "font_ps_name":     zone.get("font_ps_name") or "Arial-BoldMT",
+        "font_family":      zone.get("font_family") or "Arial",
+        "font_style":       zone.get("font_style") or "Bold",
+        "colour_hex":       zone.get("colour_hex") if zone.get("colour_hex") is not None else "#ffffff",
+        "label":            zone.get("label") or zone_name.upper(),
+        "zone_w_px":        zone.get("zone_w_px") or canvas_w_px,
+        "zone_h_px":        zone.get("zone_h_px") or canvas_h_px,
+        "preview_image":    preview_path,
     }
 
 

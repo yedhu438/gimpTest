@@ -1,4 +1,4 @@
-"""
+﻿"""
 Standalone font audit — no Pillow/rembg required.
 Connects to the DB to read font names from orders (if available),
 then checks which TTF/OTF files are present on this machine.
@@ -219,7 +219,7 @@ if found:
         short = path
         for prefix, label in [
             (r"C:\Windows\Fonts\\",   "[WinFonts]"),
-            (r"C:\Varsany\Fonts\\",   "[VarsanyFonts]"),
+            (r"C:\gimpTest\Fonts\\",   "[VarsanyFonts]"),
             (r"W:\fonts\\",           "[W:\\fonts]"),
         ]:
             if path.startswith(prefix):

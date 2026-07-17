@@ -1,4 +1,4 @@
-"""
+﻿"""
 dtf_excel_processor.py
 ======================
 Processes orders from the exported Excel file (DTF unshipped orders).
@@ -15,7 +15,7 @@ Input:
     - Images     : W:\\test1\\DTFUnshippedImages_20260411_031645\\
 
 Output:
-    - PSDs : C:\\Varsany\\Output\\DTF_Excel\\<Category>\\<OrderID>_<SKU>.psd
+    - PSDs : C:\\\\gimpTest\\\\Output\\DTF_Excel\\<Category>\\<OrderID>_<SKU>.psd
 """
 
 import os, sys, json, struct, io, traceback, argparse
@@ -34,8 +34,8 @@ except ImportError:
 _test_base    = r"C:\Users\Revathi\OneDrive\Documents\varsany\test 8\test 8"
 EXCEL_FILE    = os.environ.get("DTF_EXCEL",   os.path.join(_test_base, "UnshippedDTFOrders_20042026_014056.xlsx"))
 IMAGE_FOLDER  = os.environ.get("DTF_IMAGES",  os.path.join(_test_base, "DTFUnshippedImages_20260420_014001"))
-OUTPUT_FOLDER = os.environ.get("DTF_OUTPUT",  r"C:\Varsany\Output")
-FONT_FOLDERS  = [r"C:\Varsany\Fonts", r"W:\fonts", r"C:\Windows\Fonts"]
+OUTPUT_FOLDER = os.environ.get("DTF_OUTPUT",  r"C:\gimpTest\Output")
+FONT_FOLDERS  = [r"C:\gimpTest\Fonts", r"W:\fonts", r"C:\Windows\Fonts"]
 LOG_FILE      = os.path.join(OUTPUT_FOLDER, "dtf_excel_log.txt")
 
 DPI       = 320          # 320 pixels/inch — matches Photoshop preset standard
@@ -507,7 +507,7 @@ def should_remove_bg(img_path, sku, row, zone):
         return False
 
 _bg_remove_cache: dict = {}
-BG_CACHE_DIR = r"C:\Varsany\Temp\bg_cache"
+BG_CACHE_DIR = r"C:\gimpTest\Temp\bg_cache"
 os.makedirs(BG_CACHE_DIR, exist_ok=True)
 
 def _bg_cache_path(img_path):

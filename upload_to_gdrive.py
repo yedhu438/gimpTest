@@ -1,4 +1,4 @@
-"""
+﻿"""
 Upload today's PSD exports to Google Drive.
 
 First-time setup:
@@ -18,10 +18,10 @@ from pathlib import Path
 from datetime import datetime
 
 # ── Config ────────────────────────────────────────────────────────────────────
-LOCAL_OUTPUT   = r"C:\Varsany\Output\DTF_Excel"
+LOCAL_OUTPUT   = r"C:\gimpTest\Output\DTF_Excel"
 GDRIVE_FOLDER  = "1ZObOngMUAQo519ThI0vEckR4waKp7bsj"   # target Google Drive folder ID
-CREDENTIALS    = r"C:\Varsany\credentials.json"
-TOKEN_FILE     = r"C:\Varsany\token.json"
+CREDENTIALS    = r"C:\gimpTest\credentials.json"
+TOKEN_FILE     = r"C:\gimpTest\token.json"
 SCOPES         = ["https://www.googleapis.com/auth/drive.file"]
 
 # Upload only today's output by default

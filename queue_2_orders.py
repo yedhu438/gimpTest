@@ -1,11 +1,11 @@
-import sys, json, urllib.request
+﻿import sys, json, urllib.request
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
 from font_map import get_font_info
 from pathlib import Path
 
-JOBS_DIR   = Path(r"C:\Varsany\jobs")
-IMAGES_DIR = Path(r"C:\Varsany\Temp\OrderImages")
+JOBS_DIR   = Path(r"C:\gimpTest\jobs")
+IMAGES_DIR = Path(r"C:\gimpTest\Temp\OrderImages")
 BASE_URL   = "http://www.crssoft.co.uk/CustomOrderImages/"
 
 def get_img(img_json, img_field):
@@ -65,8 +65,8 @@ for row in rows:
             "text_lines":[l.strip() for l in bt.split("\n") if l.strip()] if bt else [],
             "font_ps_name":ps2,"font_family":fam2,"font_style":sty2,"colour_hex":get_colour(row[12])}
     if not zones: continue
-    job = {"order_id":oid,"combined":True,"template":"C:\\Varsany\\template\\combined_template.psd",
-           "zones":zones,"output_path":f"C:\\Varsany\\Output\\ps_test\\{oid}.psd","dpi":320}
+    job = {"order_id":oid,"combined":True,"template":"C:\\gimpTest\\template\\combined_template.psd",
+           "zones":zones,"output_path":f"C:\\gimpTest\\Output\\ps_test\\{oid}.psd","dpi":320}
     (JOBS_DIR/f"{oid}.json").write_text(json.dumps(job,indent=2),encoding="utf-8")
     print(f"[JOB] {oid} | zones:{list(zones.keys())} | fonts:{fam},{fam2}")
 print("Done.")

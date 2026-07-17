@@ -153,7 +153,7 @@ ALTER TABLE tblCustomOrderDetails ALTER COLUMN PocketText  nvarchar(1000);
 | shoebag2 | front | 14 | 14 | 4480 | 4480 |
 | stringbag | front | 22 | 24 | 7040 | 7680 |
 | knittingbag | front | 25 | 21 | 8000 | 6720 |
-| buckethat | front | 18 | 5 | 5760 | 1600 |
+| buckethat | front | 11 | 4 | 3520 | 1280 |
 | beanie | front | 9.5 | 4.5 | 3040 | 1440 |
 | socks | front | 6 | 12 | 1920 | 3840 |
 | seatbelt | front | 18 | 4 | 5760 | 1280 |
@@ -283,7 +283,7 @@ TEMPLATE_MAP = {
 
 - Database field: FrontPremiumFont / BackPremiumFont (Yes/No)
 - When Yes: colour ignored, font has built-in texture (camo, glitter etc.)
-- Font .ttf file must be in C:\Varsany\Fonts\ matching exact name in DB
+- Font .ttf file must be in C:\gimpTest\Fonts\ matching exact name in DB
 - If font file found → auto-process
 - If font file missing → flag to designer with email/Slack alert
 
@@ -407,7 +407,7 @@ colour_map = {
 
 ## 15. Prototype Web App
 
-**File:** C:\Varsany\prototype_app.py
+**File:** C:\gimpTest\prototype_app.py
 **Framework:** Flask — runs at http://localhost:5000
 **Database:** Local SQLEXPRESS (dbAmazonCustomOrders)
 
@@ -426,19 +426,20 @@ python prototype_app.py
 ## 16. Folder Structure
 
 ```
-C:\Varsany\
-├── prototype_app.py         Flask prototype
-├── varsany_automation.py    Production automation script
-├── varsany_automation.log   Runtime log
-├── .env                     Secrets (EMAIL_USER, EMAIL_PASS, SLACK_WEBHOOK)
-├── Uploads\                 Customer uploaded images
+C:\gimpTest\
+├── batch_processor.py       Production automation script
+├── ps_bridge.py             Photoshop UXP job bridge
+├── daemon.log               Runtime log
+├── .env                     Secrets and paths config
 ├── Output\                  Finished PSD files (date-organised)
 │   └── 2026-03-20\
 ├── Fonts\                   TTF files (names must match DB font names exactly)
-├── Templates\               28 PSD template files
+├── template\                PSD template files
 ├── Temp\                    Temp files during processing
-└── realesrgan\
-    └── realesrgan-ncnn-vulkan.exe
+│   └── OrderImages\         Customer images (UXP reads from here)
+├── jobs\                    Job JSON files (batch_processor → UXP plugin)
+├── done\                    Done markers (UXP plugin → batch_processor)
+└── error\                   Error markers (UXP plugin → batch_processor)
 ```
 
 ---
@@ -488,5 +489,5 @@ C:\Varsany\
 2. Is FrontPreviewImage populated on live database?
 3. What layer names are inside the PSD templates?
 4. Video call with Dhruv re: Synology folder structure
-5. Font files list in C:\Varsany\Fonts\ on designer PC
+5. Font files list in C:\gimpTest\Fonts\ on designer PC
 6. Does printing team prefer all-in-one file or separate per zone for quantity orders?

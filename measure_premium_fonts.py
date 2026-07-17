@@ -1,4 +1,4 @@
-"""
+﻿"""
 measure_premium_fonts.py — Measure per-character-category scale ratios for premium SVG fonts.
 
 Renders A-Z, a-z, 0-9, and common special characters for each installed premium font
@@ -13,8 +13,8 @@ Usage:
 import os, sys, re, subprocess, json, argparse, base64 as _b64
 sys.stdout.reconfigure(encoding="utf-8")
 
-FONTS_DIR  = r"C:\Varsany\Fonts"
-TEMP_DIR   = r"C:\Varsany\Temp"
+FONTS_DIR  = r"C:\gimpTest\Fonts"
+TEMP_DIR   = r"C:\gimpTest\Temp"
 CHROME_EXE = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
 PREMIUM_FONTS = {

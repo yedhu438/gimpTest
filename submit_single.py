@@ -1,4 +1,4 @@
-import sys, json, urllib.request, os
+﻿import sys, json, urllib.request, os
 from datetime import date
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
@@ -7,10 +7,10 @@ from sku_parser import build_zone_label
 from product_canvas import PRODUCT_CANVAS, SKU_MAP
 from pathlib import Path
 
-JOBS_DIR    = Path(r"C:\Varsany\jobs")
-IMAGES_DIR  = Path(r"C:\Varsany\Temp\OrderImages")
+JOBS_DIR    = Path(r"C:\gimpTest\jobs")
+IMAGES_DIR  = Path(r"C:\gimpTest\Temp\OrderImages")
 BASE_URL    = "http://www.crssoft.co.uk/CustomOrderImages/"
-OUTPUT_ROOT = Path(os.environ.get("VARSANY_OUTPUT", r"C:\Varsany\Output"))
+OUTPUT_ROOT = Path(os.environ.get("VARSANY_OUTPUT", r"C:\gimpTest\Output"))
 TODAY       = date.today().strftime("%Y-%m-%d")
 
 ORDER_IDS = ["203-7336765-5059543"]
@@ -144,9 +144,9 @@ for oid in ORDER_IDS:
     if not zones:
         print(f"[SKIP-EMPTY] {oid}"); skipped += 1; continue
 
-    tpl = f"C:\\Varsany\\template\\{product}.psd"
-    if not (Path(r"C:\Varsany\template") / f"{product}.psd").exists():
-        tpl = "C:\\Varsany\\template\\combined_template.psd"
+    tpl = f"C:\\gimpTest\\template\\{product}.psd"
+    if not (Path(r"C:\gimpTest\template") / f"{product}.psd").exists():
+        tpl = "C:\\gimpTest\\template\\combined_template.psd"
 
     out_path = get_output_path(sku, len(zones), oid)
     job = {"order_id": oid, "sku": sku, "combined": True,

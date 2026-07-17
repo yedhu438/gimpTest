@@ -1,4 +1,4 @@
-"""
+﻿"""
 Writes a BUILD_TEMPLATES.json job for the UXP plugin.
 Creates one tall blank PSD per product, width = widest zone, height = 15000px.
 """
@@ -7,7 +7,7 @@ sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from product_canvas import PRODUCT_CANVAS
 from pathlib import Path
 
-JOBS_DIR = Path(r"C:\Varsany\jobs")
+JOBS_DIR = Path(r"C:\gimpTest\jobs")
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
 job = {

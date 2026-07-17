@@ -1,11 +1,11 @@
-import sys, json, urllib.request
+﻿import sys, json, urllib.request
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
 from font_map import get_ps_font_name
 from pathlib import Path
 
-JOBS_DIR   = Path(r"C:\Varsany\jobs")
-IMAGES_DIR = Path(r"C:\Varsany\Temp\OrderImages")
+JOBS_DIR   = Path(r"C:\gimpTest\jobs")
+IMAGES_DIR = Path(r"C:\gimpTest\Temp\OrderImages")
 BASE_URL   = "http://www.crssoft.co.uk/CustomOrderImages/"
 
 def get_img(img_json, img_field):
@@ -53,14 +53,14 @@ for zone_name, img_json, img_field, text, fonts, colours in [
     if not fi and not ft: continue
     job = {
         "order_id":    f"202-8958969-0276362_{zone_name}",
-        "template":    "C:\\Varsany\\template\\adulttshirt.psd",
+        "template":    "C:\\gimpTest\\template\\adulttshirt.psd",
         "zones": { zone_name: {
             "customer_image": ensure_image(fi),
             "text_lines":     [l.strip() for l in ft.split("\n") if l.strip()] if ft else [],
             "font_ps_name":   get_ps_font_name(fonts),
             "colour_hex":     get_colour(colours),
         }},
-        "output_path": f"C:\\Varsany\\Output\\ps_test\\202-8958969-0276362_{zone_name}.psd",
+        "output_path": f"C:\\gimpTest\\Output\\ps_test\\202-8958969-0276362_{zone_name}.psd",
         "canvas_w_px": 3779, "canvas_h_px": 3779, "dpi": 320
     }
     (JOBS_DIR / f"202-8958969-0276362_{zone_name}.json").write_text(json.dumps(job, indent=2), encoding="utf-8")

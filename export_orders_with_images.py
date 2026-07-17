@@ -1,4 +1,4 @@
-"""
+﻿"""
 export_orders_with_images.py
 Query local DB for up to 10 orders that have at least one customer image,
 and export full details to Excel.
@@ -6,7 +6,7 @@ and export full details to Excel.
 Run:
     python export_orders_with_images.py
 Output:
-    C:\\Varsany\\Output\\orders_with_images_YYYYMMDD_HHMMSS.xlsx
+    C:\\\\gimpTest\\\\Output\\orders_with_images_YYYYMMDD_HHMMSS.xlsx
 """
 
 import os
@@ -20,7 +20,7 @@ from db import get_connection as _db_get_connection
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 
-OUTPUT_DIR  = r"C:\Varsany\Output"
+OUTPUT_DIR  = r"C:\gimpTest\Output"
 OUTPUT_FILE = os.path.join(
     OUTPUT_DIR,
     f"orders_with_images_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"

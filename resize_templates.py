@@ -1,7 +1,7 @@
-"""Resize all existing templates to 60000px height."""
+﻿"""Resize all existing templates to 60000px height."""
 import time, os, win32com.client
 
-TEMPLATE_DIR = r"C:\Varsany\template"
+TEMPLATE_DIR = r"C:\gimpTest\template"
 ps = win32com.client.Dispatch("Photoshop.Application")
 ps.DisplayDialogs = 3
 

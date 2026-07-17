@@ -1,11 +1,11 @@
-"""Download the specific fonts needed by batch_processor.py from NAS"""
+﻿"""Download the specific fonts needed by batch_processor.py from NAS"""
 import os, requests, urllib3
 urllib3.disable_warnings()
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 
 NAS_BASE  = "https://192.168.0.113:5001/webapi"
-LOCAL_DIR = r"C:\Varsany\Fonts"
+LOCAL_DIR = r"C:\gimpTest\Fonts"
 NAS_FONTS = "/Vector Designs/Resources/Fonts"
 
 # Exact NAS filenames → what to save locally as

@@ -1,4 +1,4 @@
-import sys, json, urllib.request, os
+﻿import sys, json, urllib.request, os
 from datetime import date
 sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
 from db import get_connection
@@ -6,10 +6,10 @@ from font_map import get_font_info
 from sku_parser import build_zone_label
 from pathlib import Path
 
-JOBS_DIR    = Path(r"C:\Varsany\jobs")
-IMAGES_DIR  = Path(r"C:\Varsany\Temp\OrderImages")
+JOBS_DIR    = Path(r"C:\gimpTest\jobs")
+IMAGES_DIR  = Path(r"C:\gimpTest\Temp\OrderImages")
 BASE_URL    = "http://www.crssoft.co.uk/CustomOrderImages/"
-OUTPUT_ROOT = Path(os.environ.get("VARSANY_OUTPUT", r"C:\Varsany\Output"))
+OUTPUT_ROOT = Path(os.environ.get("VARSANY_OUTPUT", r"C:\gimpTest\Output"))
 
 # Product categories and their SKU prefix keywords
 # IMPORTANT: More specific prefixes must come BEFORE catch-alls like "AnyTxt"
@@ -159,9 +159,9 @@ for cat, prefixes in CATEGORIES.items():
         for zone_name in list(zones.keys()):
             zones[zone_name]["label"] = build_zone_label(zone_name, sku, True)
 
-        tpl_path = f"C:\\Varsany\\template\\{cat}.psd"
-        if not (Path(r"C:\Varsany\template") / f"{cat}.psd").exists():
-            tpl_path = "C:\\Varsany\\template\\combined_template.psd"
+        tpl_path = f"C:\\gimpTest\\template\\{cat}.psd"
+        if not (Path(r"C:\gimpTest\template") / f"{cat}.psd").exists():
+            tpl_path = "C:\\gimpTest\\template\\combined_template.psd"
 
         out_path = get_output_path(sku, len(zones), oid, cat)
         job = {
