@@ -1,0 +1,20 @@
+{
+  "order_id": "026-8498486-8555564",
+  "template": "C:\\gimpTest\\template\\england Football Adult.psd",
+  "zones": {},
+  "output_path": "C:\\gimpTest\\Output\\2026-07-17\\semicustomized\\026-8498486-8555564.psd",
+  "combined": false,
+  "canvas_w_px": 3780,
+  "canvas_h_px": 3780,
+  "dpi": 320,
+  "type": "semi_custom",
+  "text_replacements": {
+    "Player": "CROPPER",
+    "08": "18"
+  },
+  "colour_hex": "#0f0f0f",
+  "quantity": 1,
+  "items": [],
+  "multi_items": [],
+  "submitted_at": "2026-07-17T14:01:04.583731"
+}

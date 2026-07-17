@@ -1,0 +1,59 @@
+﻿========================================================================
+TOPAZ PROCESSING ANALYSIS — FULL DATABASE
+========================================================================
+
+[1] OVERALL
+  Total detail rows          : 136,281
+  Rows with image data       : 49,622  (36.4%)
+  Text-only rows (no image)  : 86,659  (63.6%)
+
+[2] IsTopazImageProcess flag (on rows WITH images)
+  Image rows total           : 49,622
+  IsTopazImageProcess = 1    : 708  (1.4%)  ← Topaz done
+  IsTopazImageProcess = 0    : 366  (0.7%)  ← not sent / failed
+  IsTopazImageProcess = NULL : 48,548  (97.8%)  ← never attempted
+
+[3] Topaz_Processed flag (on image rows)
+  Topaz_Processed = 1        : 881  (1.8%)
+  Topaz_Processed = 0        : 0  (0.0%)
+  Topaz_Processed = NULL     : 48,741  (98.2%)
+
+[4] FLAG MISMATCHES (potential failures)
+  Topaz_Processed=1 but IsTopazImageProcess=0/NULL : 245
+  IsTopazImageProcess=1 but Topaz_Processed=0/NULL : 138
+
+[5] IsTopazImageProcess=1 but TopazImage columns EMPTY
+  Count : 2  ← flag says done but no Topaz filename stored
+
+[6] FrontTopazImage set, FrontImage is EMPTY
+  Count : 0
+
+[7] PER-ZONE TOPAZ COVERAGE
+  Zone        Raw images    Topaz images    Coverage
+  ----------------------------------------------------
+  Front           41,884             561        1.3%
+  Back            12,230             218        1.8%
+  Pocket           4,682             122        2.6%
+  Sleeve               0               0         n/a
+
+[8] RECENT TREND — last 7 days (by DateAdd)
+  Date           Img rows   Topaz done    Flag=0      NULL     Done%
+  ----------------------------------------------------------------
+  2026-06-25           10            8         2         0     80.0%
+  2026-06-24           77           58        19         0     75.3%
+  2026-06-23           79           60        19         0     75.9%
+  2026-06-22           89           76        13         0     85.4%
+  2026-06-21           62           49        13         0     79.0%
+  2026-06-20           49           36        13         0     73.5%
+  2026-06-19           63           44        19         0     69.8%
+  2026-06-18           63           54         9         0     85.7%
+
+[9] STUCK / FAILED TOPAZ JOBS
+  (TopazImageStartTime set but IsTopazImageProcess still 0/NULL)
+  Stuck/failed jobs : 0
+
+[10] READY TO EXPORT (Topaz done, design not yet complete)
+  Orders ready (Topaz done, design pending) : 233
+  Orders waiting on Topaz (design pending)  : 28,368
+
+========================================================================

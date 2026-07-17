@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Varsany Print Automation — End-to-End Analysis</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #222536;
+    --border: #2e3147;
+    --text: #e2e4f0;
+    --muted: #8b8fa8;
+    --accent: #7c6af7;
+    --accent2: #5bc8af;
+    --warn: #f5a623;
+    --err: #e05252;
+    --ok: #4caf81;
+    --info: #4a9eff;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 22px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+  h2 { font-size: 16px; font-weight: 600; color: var(--accent); margin: 28px 0 12px; text-transform: uppercase; letter-spacing: .08em; }
+  h3 { font-size: 13px; font-weight: 600; color: #fff; margin-bottom: 6px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+
+  /* Pipeline diagram */
+  .pipeline {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    margin-bottom: 8px;
+  }
+  .pipe-step {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    min-width: 130px;
+    flex: 1;
+    position: relative;
+  }
+  .pipe-step + .pipe-step { margin-left: 4px; }
+  .pipe-step::after {
+    content: '→';
+    position: absolute;
+    right: -14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 16px;
+    z-index: 2;
+  }
+  .pipe-step:last-child::after { display: none; }
+  .pipe-step .label { font-size: 11px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .06em; }
+  .pipe-step .name { font-size: 13px; font-weight: 600; color: #fff; }
+  .pipe-step .file { font-size: 11px; color: var(--accent); margin-top: 2px; font-family: monospace; }
+  .pipe-step.highlight { border-color: var(--accent); background: #1e1b3a; }
+  .pipe-step.warn { border-color: var(--warn); background: #1f1a10; }
+
+  /* Grid layout */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media(max-width: 800px) { .grid2, .grid3 { grid-template-columns: 1fr; } }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+  }
+  .card.accent-border { border-left: 3px solid var(--accent); }
+  .card.warn-border { border-left: 3px solid var(--warn); }
+  .card.err-border { border-left: 3px solid var(--err); }
+  .card.ok-border { border-left: 3px solid var(--ok); }
+
+  /* Issues table */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: var(--surface2); padding: 8px 10px; text-align: left; font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .sev { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+  .sev.crit { background: #3a1111; color: var(--err); }
+  .sev.high { background: #2d1f07; color: var(--warn); }
+  .sev.med { background: #0f2030; color: var(--info); }
+  .sev.low { background: #101f18; color: var(--ok); }
+
+  /* Module list */
+  .module-list { display: flex; flex-direction: column; gap: 10px; }
+  .module-row {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: grid;
+    grid-template-columns: 180px 1fr 160px;
+    gap: 12px;
+    padding: 12px 14px;
+    align-items: start;
+  }
+  .module-row .fname { font-family: monospace; font-size: 12px; color: var(--accent); font-weight: 600; }
+  .module-row .fdesc { font-size: 12px; color: var(--text); }
+  .module-row .ftags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+  .tag { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+  .tag.core { background: #1e1b3a; color: var(--accent); }
+  .tag.util { background: #101f18; color: var(--ok); }
+  .tag.db { background: #0f2030; color: var(--info); }
+  .tag.diag { background: #1f1a10; color: var(--warn); }
+  .tag.plugin { background: #1a1426; color: #c48ef7; }
+
+  /* Flow diagram SVG area */
+  .flow-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; overflow-x: auto; }
+  .flow-wrap svg { display: block; min-width: 700px; }
+
+  code { font-family: 'Cascadia Code', 'Consolas', monospace; background: var(--surface2); padding: 1px 5px; border-radius: 3px; font-size: 12px; color: var(--accent2); }
+  .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  ul { padding-left: 18px; }
+  li { margin-bottom: 3px; font-size: 13px; }
+  .section-intro { color: var(--muted); font-size: 13px; margin-bottom: 14px; line-height: 1.7; }
+
+  /* Stat strip */
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 18px; text-align: center; }
+  .stat .n { font-size: 22px; font-weight: 700; color: #fff; }
+  .stat .l { font-size: 11px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: .05em; }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+</style>
+</head>
+<body>
+
+<h1>Varsany Print Automation — End-to-End Analysis</h1>
+<p class="subtitle">Codebase: C:\gimpTest &nbsp;·&nbsp; Analysed: 2026-06-22 &nbsp;·&nbsp; Branch: master</p>
+
+<div class="stats">
+  <div class="stat"><div class="n">90+</div><div class="l">Python files</div></div>
+  <div class="stat"><div class="n">2</div><div class="l">JSX/HTML plugins</div></div>
+  <div class="stat"><div class="n">3,800+</div><div class="l">Lines (core processor)</div></div>
+  <div class="stat"><div class="n">23</div><div class="l">Product templates</div></div>
+  <div class="stat"><div class="n">50+</div><div class="l">Fonts mapped</div></div>
+  <div class="stat"><div class="n">7</div><div class="l">Critical issues</div></div>
+</div>
+
+<!-- ── PIPELINE ── -->
+<h2>End-to-End Pipeline</h2>
+<p class="section-intro">
+  An Amazon order triggers data into SQL Server. Every 3 seconds <code>run_loop.py</code> polls for unprocessed rows,
+  routes them through <code>batch_processor.py</code>, and either writes a pure-Python CMYK PSD or hands the job to the
+  Photoshop UXP plugin via a JSON job-queue. Finished PSDs are uploaded to the Synology NAS.
+</p>
+
+<div class="flow-wrap" style="margin-bottom:16px">
+<svg viewBox="0 0 860 220" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:860px">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#8b8fa8"/>
+    </marker>
+  </defs>
+
+  <!-- boxes -->
+  <!-- 1: Amazon -->
+  <rect x="10" y="70" width="110" height="80" rx="6" fill="#1a1d27" stroke="#2e3147"/>
+  <text x="65" y="96" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">STEP 1</text>
+  <text x="65" y="112" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold" font-family="sans-serif">Amazon</text>
+  <text x="65" y="128" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">Order placed</text>
+  <text x="65" y="141" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">→ SQL Server</text>
+
+  <!-- 2: run_loop -->
+  <rect x="148" y="70" width="120" height="80" rx="6" fill="#1a1d27" stroke="#2e3147"/>
+  <text x="208" y="96" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">STEP 2</text>
+  <text x="208" y="112" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold" font-family="sans-serif">run_loop.py</text>
+  <text x="208" y="128" text-anchor="middle" fill="#7c6af7" font-size="10" font-family="monospace">Poll every 3s</text>
+  <text x="208" y="141" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">→ batch_processor</text>
+
+  <!-- 3: batch_processor -->
+  <rect x="296" y="50" width="140" height="120" rx="6" fill="#1e1b3a" stroke="#7c6af7" stroke-width="1.5"/>
+  <text x="366" y="76" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">CORE ENGINE</text>
+  <text x="366" y="92" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold" font-family="sans-serif">batch_processor.py</text>
+  <text x="366" y="108" text-anchor="middle" fill="#5bc8af" font-size="10" font-family="sans-serif">3,800+ lines</text>
+  <text x="366" y="123" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">Image • Text • BgRemove</text>
+  <text x="366" y="138" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">CMYK PSD writer</text>
+  <text x="366" y="153" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">Chrome SVG fonts</text>
+
+  <!-- 4a: Python PSD -->
+  <rect x="468" y="50" width="120" height="52" rx="6" fill="#1a1d27" stroke="#2e3147"/>
+  <text x="528" y="72" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">PATH A</text>
+  <text x="528" y="88" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold" font-family="sans-serif">Python PSD</text>
+  <text x="528" y="98" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">write_psd()</text>
+
+  <!-- 4b: Photoshop UXP -->
+  <rect x="468" y="118" width="120" height="52" rx="6" fill="#1a1426" stroke="#c48ef7"/>
+  <text x="528" y="140" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">PATH B</text>
+  <text x="528" y="156" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold" font-family="sans-serif">UXP Plugin</text>
+  <text x="528" y="166" text-anchor="middle" fill="#c48ef7" font-size="10" font-family="sans-serif">ps_bridge → PS</text>
+
+  <!-- 5: Output -->
+  <rect x="620" y="70" width="110" height="80" rx="6" fill="#1a1d27" stroke="#2e3147"/>
+  <text x="675" y="96" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">STEP 5</text>
+  <text x="675" y="112" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold" font-family="sans-serif">PSD File</text>
+  <text x="675" y="128" text-anchor="middle" fill="#5bc8af" font-size="10" font-family="sans-serif">CMYK · 320 DPI</text>
+  <text x="675" y="141" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">C:\Varsany\Output\</text>
+
+  <!-- 6: NAS -->
+  <rect x="758" y="70" width="90" height="80" rx="6" fill="#101f18" stroke="#4caf81"/>
+  <text x="803" y="96" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">STEP 6</text>
+  <text x="803" y="112" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold" font-family="sans-serif">Synology</text>
+  <text x="803" y="128" text-anchor="middle" fill="#4caf81" font-size="10" font-family="sans-serif">NAS Upload</text>
+  <text x="803" y="141" text-anchor="middle" fill="#8b8fa8" font-size="10" font-family="sans-serif">Z:\ drive</text>
+
+  <!-- arrows -->
+  <line x1="120" y1="110" x2="145" y2="110" stroke="#8b8fa8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="268" y1="110" x2="293" y2="110" stroke="#8b8fa8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <!-- batch → path A -->
+  <line x1="436" y1="90" x2="465" y2="80" stroke="#8b8fa8" stroke-width="1.2" marker-end="url(#arr)"/>
+  <!-- batch → path B -->
+  <line x1="436" y1="130" x2="465" y2="150" stroke="#c48ef7" stroke-width="1.2" marker-end="url(#arr)"/>
+  <!-- path A → output -->
+  <line x1="588" y1="76" x2="617" y2="100" stroke="#8b8fa8" stroke-width="1.2" marker-end="url(#arr)"/>
+  <!-- path B → output -->
+  <line x1="588" y1="148" x2="617" y2="126" stroke="#c48ef7" stroke-width="1.2" marker-end="url(#arr)"/>
+  <line x1="730" y1="110" x2="755" y2="110" stroke="#4caf81" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- DB indicator -->
+  <text x="65" y="30" text-anchor="middle" fill="#4a9eff" font-size="10" font-family="sans-serif">SQL Server</text>
+  <line x1="65" y1="35" x2="65" y2="68" stroke="#4a9eff" stroke-width="1" stroke-dasharray="3,2"/>
+</svg>
+</div>
+
+<div class="grid2" style="margin-bottom:16px">
+  <div class="card ok-border">
+    <h3>Path A — Pure Python PSD Writer</h3>
+    <p style="font-size:12px;color:var(--muted);margin-top:6px">Used when Photoshop is not running or <code>USE_PHOTOSHOP_BRIDGE=0</code>. <code>batch_processor.write_psd()</code> builds a valid CMYK PSD entirely in Python using struct + zlib. No Photoshop dependency. Slower rendering for SVG/premium fonts (Chrome subprocess per glyph).</p>
+  </div>
+  <div class="card accent-border">
+    <h3>Path B — Photoshop UXP Plugin</h3>
+    <p style="font-size:12px;color:var(--muted);margin-top:6px">Preferred path when <code>USE_PHOTOSHOP_BRIDGE=1</code> and Photoshop.exe is running. <code>ps_bridge.py</code> writes a job JSON → UXP plugin (<code>index.html</code>) polls every 3s, opens the template, places layers, exports PSD. Better for template fidelity.</p>
+  </div>
+</div>
+
+
+<!-- ── MODULES ── -->
+<h2>Module Map</h2>
+<div class="module-list">
+
+  <div class="module-row">
+    <div><div class="fname">run_loop.py</div></div>
+    <div class="fdesc">Daemon entry-point. Polls DB every 3 s, calls <code>run_batch()</code>. CLI flags: <code>--dry-run</code>, <code>--interval</code>, <code>--nas</code>, <code>--hours</code>, <code>--date-after</code>. Captures startup time as order cutoff. No process lock — multiple instances can run concurrently.</div>
+    <div class="ftags"><span class="tag core">Core</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">batch_processor.py</div></div>
+    <div class="fdesc">3,800-line core engine. Fetches orders, groups by OrderID, detects type (normal / semi-custom / multi-zone), builds image layers (bg removal, upscaling), text layers (PIL or Chrome SVG), assembles CMYK PSD. Max-K GCR colour conversion, SWOP v2 ICC, RLE PackBits compression. Route guard: if Photoshop is running delegates to ps_bridge.</div>
+    <div class="ftags"><span class="tag core">Core</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">ps_bridge.py</div></div>
+    <div class="fdesc">Python side of the Photoshop UXP bridge. Writes job JSON to <code>jobs/</code>, copies images to <code>Temp/OrderImages/</code>, polls <code>done/</code> or <code>error/</code> for completion (timeout scales with quantity). Race-condition risk on file write.</div>
+    <div class="ftags"><span class="tag core">Core</span><span class="tag plugin">Plugin</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">uxp-plugin/index.html</div></div>
+    <div class="fdesc">Adobe Photoshop UXP panel (v3.8). Polls <code>jobs/</code> every 3 s. Modes: <em>standard</em> (place image + text layers) and <em>semi_custom</em> (text-only replacement). Multi-item stacking: opens fresh template copies, copyMerged, pastes vertically. Auto-sizes text 20–400pt. Handles combined multi-zone stacking.</div>
+    <div class="ftags"><span class="tag plugin">Plugin</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">bg_remover.py</div></div>
+    <div class="fdesc">Colour-key background removal. Derives garment RGB from SKU code. Checks ≥95% edge match before acting (avoids removing intentional white backgrounds). Checks ≤80% interior flatness (avoids removing on designs). Pixel Euclidean distance ≤40 threshold.</div>
+    <div class="ftags"><span class="tag core">Core</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">sku_parser.py</div></div>
+    <div class="fdesc">Parses SKU strings (e.g. <code>MenTee_BlkM</code>) → (colour name, size). 27 colour codes; longest-first matching. <code>format_size()</code> converts numeric sizes to ranges. Builds zone label strings for PSD.</div>
+    <div class="ftags"><span class="tag core">Core</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">product_canvas.py</div></div>
+    <div class="fdesc">Registry of 23+ product types with printable zone pixel dimensions at 320 DPI. <code>SKU_MAP</code> maps SKU prefixes to product keys. First match wins — longer prefixes should come first.</div>
+    <div class="ftags"><span class="tag core">Core</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">font_map.py</div></div>
+    <div class="fdesc">Maps DB font names → (PostScript name, Family, Style) for Photoshop. 50+ entries. Premium SVG fonts section separate. Fallback chain: PremiumFont → NormalFont → dict lookup → case-insensitive → Arial Bold. 30+ entries currently map to Arial Bold (missing fonts).</div>
+    <div class="ftags"><span class="tag core">Core</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">synology_upload.py</div></div>
+    <div class="fdesc">HTTP API uploader for Synology NAS. Logs in, creates remote folder tree, POSTs .psd files. Walks entire <code>Output/</code> directory. <strong>NAS password hardcoded in source.</strong></div>
+    <div class="ftags"><span class="tag core">Core</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">db.py</div></div>
+    <div class="fdesc">Database connection factory. Tries ODBC Driver 17 then "SQL Server" driver. Reads server/creds from <code>.env</code>. Default server <code>81.0.219.26</code>. No connection pooling.</div>
+    <div class="ftags"><span class="tag db">DB</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">shared.py</div></div>
+    <div class="fdesc">Legacy helper: parses order rows into zone dicts, writes job JSONs for external processors. Used by export scripts. Overlaps with batch_processor logic — no shared constants.</div>
+    <div class="ftags"><span class="tag util">Util</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">export_today.py</div></div>
+    <div class="fdesc">One-shot batch run for a specific date. Currently hardcoded to <code>2026-06-11</code>, limit 5 orders, NAS disabled. Intended to be edited per-day or replaced with a CLI arg version.</div>
+    <div class="ftags"><span class="tag util">Util</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">submit_uxp_jobs.py</div></div>
+    <div class="fdesc">Queries last 30 days of image orders from DB → calls <code>shared.write_jobs()</code> to queue them. Used to backfill/replay orders.</div>
+    <div class="ftags"><span class="tag util">Util</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">requeue_single.py</div></div>
+    <div class="fdesc">Resets <code>Topaz_Processed=0</code> for a single order so it re-enters the pipeline. Takes ORDER_ID as CLI arg.</div>
+    <div class="ftags"><span class="tag util">Util</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">get_order.py / count_orders.py</div></div>
+    <div class="fdesc">Diagnostic tools. <code>get_order.py</code> dumps all DB columns for one order. <code>count_orders.py</code> outputs order-type breakdown for hardcoded dates. Both require in-code edits to change the target.</div>
+    <div class="ftags"><span class="tag diag">Diag</span></div>
+  </div>
+
+  <div class="module-row">
+    <div><div class="fname">prototype_app.py</div></div>
+    <div class="fdesc">Flask app (localhost:5000). Manual order submission form, live log panel, order history. Standalone pure-Python PSD engine (no Photoshop). Useful for testing design rules without needing the full pipeline.</div>
+    <div class="ftags"><span class="tag util">Util</span></div>
+  </div>
+
+</div>
+
+
+<!-- ── ISSUES ── -->
+<h2>Issues &amp; Risks</h2>
+<div style="overflow-x:auto">
+<table>
+  <thead>
+    <tr>
+      <th>Severity</th>
+      <th>File</th>
+      <th>Issue</th>
+      <th>Fix</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><span class="sev crit">CRIT</span></td>
+      <td><code>synology_upload.py</code></td>
+      <td>NAS password hardcoded in source (<code>NAS_PASS = "Varsany2026"</code>)</td>
+      <td>Move to <code>.env</code>; already in <code>.gitignore</code> so secrets won't leak once removed from source</td>
+    </tr>
+    <tr>
+      <td><span class="sev crit">CRIT</span></td>
+      <td><code>batch_processor.py</code></td>
+      <td>SQL injection risk — <code>--sku-filter</code> and similar CLI args concatenated directly into WHERE clause</td>
+      <td>Use parameterised queries (<code>cursor.execute("... WHERE SKU=?", (sku,))</code>)</td>
+    </tr>
+    <tr>
+      <td><span class="sev high">HIGH</span></td>
+      <td><code>run_loop.py</code></td>
+      <td>No process lock — two daemon instances can run simultaneously and double-process orders</td>
+      <td>Write a PID file on start; exit if file exists and PID is still running</td>
+    </tr>
+    <tr>
+      <td><span class="sev high">HIGH</span></td>
+      <td><code>ps_bridge.py</code></td>
+      <td>Race condition — Python reads done file while UXP may still be writing it (no file-locking)</td>
+      <td>UXP writes to <code>.tmp</code>, then renames to <code>.json</code>; Python only reads complete files</td>
+    </tr>
+    <tr>
+      <td><span class="sev high">HIGH</span></td>
+      <td><code>ps_bridge.py</code></td>
+      <td>Done/error files never cleaned up — accumulate indefinitely in <code>done/</code> and <code>error/</code></td>
+      <td>Delete job + done files after successful read, or archive on a schedule</td>
+    </tr>
+    <tr>
+      <td><span class="sev high">HIGH</span></td>
+      <td><code>db.py</code></td>
+      <td><code>TrustServerCertificate=yes</code> disables SSL cert validation (MITM vulnerable)</td>
+      <td>Install a valid cert on the SQL Server VPS, remove the flag</td>
+    </tr>
+    <tr>
+      <td><span class="sev high">HIGH</span></td>
+      <td><code>export_today.py</code> / <code>get_order.py</code> etc.</td>
+      <td>Dates and ORDER_IDs hardcoded — require in-code edits for every new run</td>
+      <td>Add <code>argparse</code> so they accept <code>--date YYYY-MM-DD</code> / <code>--order-id</code></td>
+    </tr>
+    <tr>
+      <td><span class="sev med">MED</span></td>
+      <td><code>batch_processor.py</code></td>
+      <td>Chrome subprocess timeout hardcoded (40s/30s/20s per glyph) — may fail on slow machines or with large fonts</td>
+      <td>Make timeout configurable via <code>.env</code> (<code>CHROME_TIMEOUT_S=40</code>)</td>
+    </tr>
+    <tr>
+      <td><span class="sev med">MED</span></td>
+      <td><code>batch_processor.py</code></td>
+      <td>Image download failures are silent — zone is skipped without marking order for review</td>
+      <td>Set <code>QCStatus='download_error'</code> in DB and alert designer on failure</td>
+    </tr>
+    <tr>
+      <td><span class="sev med">MED</span></td>
+      <td><code>uxp-plugin/index.html</code></td>
+      <td>Path resolution uses multiple fallbacks (token file → legacy Varsany path) — confusing if folders move</td>
+      <td>Single canonical root set in <code>.env</code>, written to <code>uxp_token.txt</code> once at setup</td>
+    </tr>
+    <tr>
+      <td><span class="sev med">MED</span></td>
+      <td><code>requirements.txt</code></td>
+      <td>No version pins — a future <code>pip install</code> can silently break the pipeline</td>
+      <td>Run <code>pip freeze &gt; requirements.txt</code> to lock versions</td>
+    </tr>
+    <tr>
+      <td><span class="sev med">MED</span></td>
+      <td><code>run_export.bat</code></td>
+      <td>Hardcoded <code>C:\Python313\</code> but SETUP_GUIDE says Python 3.11</td>
+      <td>Use <code>python</code> from PATH, or set <code>PYTHON_EXE</code> in the bat file</td>
+    </tr>
+    <tr>
+      <td><span class="sev low">LOW</span></td>
+      <td><code>db.py</code></td>
+      <td>No connection pooling — opens a new connection per operation (slow under load)</td>
+      <td>Use a module-level singleton connection or <code>pyodbc</code> pool</td>
+    </tr>
+    <tr>
+      <td><span class="sev low">LOW</span></td>
+      <td><code>sku_parser.py</code></td>
+      <td><code>format_size()</code> assumes even-length numeric strings (<code>"9"</code> or <code>"123"</code> would split incorrectly)</td>
+      <td>Add a lookup table for known size strings; fall back to raw value</td>
+    </tr>
+    <tr>
+      <td><span class="sev low">LOW</span></td>
+      <td><code>synology_upload.py</code></td>
+      <td><code>_ensure_folder()</code> does not check HTTP response — folder creation may fail silently</td>
+      <td>Parse response JSON and raise on error code</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+
+<!-- ── ARCHITECTURE NOTES ── -->
+<h2>Architecture Notes</h2>
+<div class="grid2">
+
+  <div class="card accent-border">
+    <h3>Two Rendering Paths (intentional)</h3>
+    <p class="note" style="color:var(--text)">The Python PSD writer is the independence-guaranteeing fallback — it runs with zero Photoshop dependency on any machine. The UXP path is higher fidelity (real layers, live text, template-accurate placement) but requires Photoshop to be open. <code>USE_PHOTOSHOP_BRIDGE</code> in <code>.env</code> controls the default; batch_processor also auto-detects whether Photoshop.exe is running.</p>
+  </div>
+
+  <div class="card accent-border">
+    <h3>Font Rendering Stack</h3>
+    <p class="note" style="color:var(--text)">Standard fonts: PIL renders directly (fast). Premium SVG fonts (camo, glitter, paint): Chrome headless renders glyph-by-glyph via <code>@font-face</code> CSS, captures PNG, composites. Three strategies attempted in sequence with fallback. Slowest path is ~20s per glyph on cold Chrome.</p>
+  </div>
+
+  <div class="card warn-border">
+    <h3>Job Queue — File-Based</h3>
+    <p class="note" style="color:var(--text)">The bridge between Python and the UXP plugin is a folder of JSON files — not a proper message queue. This is pragmatic (no extra infra) but means: no acknowledgement, no retry-on-crash, no ordering guarantee. The done/error folders accumulate indefinitely. Acceptable for current volume; would need revisiting at 500+ orders/day.</p>
+  </div>
+
+  <div class="card warn-border">
+    <h3>NAS Dependency</h3>
+    <p class="note" style="color:var(--text)">Output PSDs go to local <code>C:\Varsany\Output\</code> first, then uploaded to Synology NAS. If NAS is unreachable, local files persist but the India↔UK sync stalls. <code>upload_nas=False</code> flag in export scripts is the current workaround. Long-term: a retry queue for failed NAS uploads.</p>
+  </div>
+
+  <div class="card ok-border">
+    <h3>Quantity &amp; Multi-Zone Handling</h3>
+    <p class="note" style="color:var(--text)">Quantity &gt;1 stacks copies vertically on one canvas (1cm gap) — printing team cuts apart. Multi-zone (front+back+sleeve) stacks zones vertically in combined mode. The UXP plugin handles both via canvas expansion + copyMerge paste. The Python path handles quantity but stacks zones into separate files.</p>
+  </div>
+
+  <div class="card ok-border">
+    <h3>Semi-Custom (Football Jerseys)</h3>
+    <p class="note" style="color:var(--text)">A distinct code path: no image placement, only text substitution into named Photoshop template layers (e.g. "Player", "08"). Multi-item stacking in v3.7 was reworked to open a fresh template copy per item then paste into the main document — fixes the v3.6 document-confusion bug.</p>
+  </div>
+
+</div>
+
+
+<!-- ── UTILITY SCRIPTS ── -->
+<h2>Utility &amp; Diagnostic Scripts</h2>
+<p class="section-intro">~60 scripts beyond the core pipeline. Most are single-use or exploratory — useful to know what exists.</p>
+<div class="grid3">
+  <div class="card">
+    <h3>Order Inspection</h3>
+    <ul>
+      <li><code>get_order.py</code> — dump all DB fields for one order</li>
+      <li><code>_find_order.py</code> — search orders by keyword</li>
+      <li><code>get_order_details.py</code> — extended detail dump</li>
+      <li><code>check_processed.py</code> — audit processed status</li>
+      <li><code>count_orders.py</code> — date-range breakdown</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Export / Queue</h3>
+    <ul>
+      <li><code>export_today.py</code> — run batch for a date</li>
+      <li><code>export_yesterday.py</code> — yesterday's orders</li>
+      <li><code>export_these_orders.py</code> — specific list</li>
+      <li><code>submit_uxp_jobs.py</code> — last 30 days</li>
+      <li><code>process_these_orders.py</code> — force-process list</li>
+      <li><code>requeue_single.py</code> — reset Topaz flag</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Checks &amp; Audits</h3>
+    <ul>
+      <li><code>check_schema.py</code> — verify DB columns</li>
+      <li><code>check_templates.py</code> — validate template files</li>
+      <li><code>check_topaz.py</code> — Topaz column status</li>
+      <li><code>audit_fonts.py</code> — font file audit</li>
+      <li><code>check_image_urls.py</code> — URL reachability</li>
+      <li><code>nas_test.py</code> — test NAS connectivity</li>
+      <li><code>test_db.py</code> — DB connection test</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Font Tools</h3>
+    <ul>
+      <li><code>download_fonts.py</code> — auto-download from NAS</li>
+      <li><code>install_fonts.py</code> — system-install TTFs</li>
+      <li><code>find_fonts_nas.py</code> — locate fonts on NAS</li>
+      <li><code>measure_premium_fonts.py</code> — glyph metrics</li>
+      <li><code>get_all_fonts.py</code> — list installed fonts</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Templates</h3>
+    <ul>
+      <li><code>create_all_templates.py</code> — create 23 blank PSDs</li>
+      <li><code>create_combined_template.py</code> — multi-zone PSD</li>
+      <li><code>resize_templates.py</code> — resize to 30000px tall</li>
+      <li><code>check_templates.py</code> — verify dimensions</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Setup</h3>
+    <ul>
+      <li><code>SETUP_GUIDE.md</code> — full deploy manual</li>
+      <li><code>setup.bat</code> / <code>install_vps.ps1</code> — bootstrap scripts</li>
+      <li><code>add_topaz_processed_col.py</code> — one-time DB migration</li>
+      <li><code>run_loop.py</code> + <code>start.bat</code> — daemon launcher</li>
+    </ul>
+  </div>
+</div>
+
+
+<!-- ── RECOMMENDATIONS ── -->
+<h2>Top Recommendations</h2>
+<div class="grid2">
+  <div class="card err-border">
+    <h3>1. Move hardcoded secrets to .env (immediate)</h3>
+    <p class="note" style="color:var(--text)">NAS password in <code>synology_upload.py</code> is committed to git history. Rotate the NAS password, update <code>.env.example</code>, and read from <code>os.environ</code>. Run <code>git filter-branch</code> or BFG Repo Cleaner to scrub history if repo is shared.</p>
+  </div>
+  <div class="card err-border">
+    <h3>2. Parameterise SQL queries (immediate)</h3>
+    <p class="note" style="color:var(--text)">Any string interpolation into SQL is a potential injection. Replace with <code>cursor.execute(sql, params)</code> throughout <code>batch_processor.py</code> and <code>db.py</code>.</p>
+  </div>
+  <div class="card warn-border">
+    <h3>3. Add process lock to run_loop.py</h3>
+    <p class="note" style="color:var(--text)">A single <code>daemon.pid</code> file prevents double-processing. On Windows: <code>msvcrt.locking()</code> or simply write PID and check on startup.</p>
+  </div>
+  <div class="card warn-border">
+    <h3>4. Atomic job file writes (ps_bridge)</h3>
+    <p class="note" style="color:var(--text)">UXP should write to <code>{id}.tmp</code> then <code>os.rename()</code> to <code>{id}.json</code>. Python should only pick up <code>.json</code> extension files. This eliminates the partial-read race condition.</p>
+  </div>
+  <div class="card accent-border">
+    <h3>5. Pin requirements.txt</h3>
+    <p class="note" style="color:var(--text)">Run <code>pip freeze &gt; requirements.txt</code> on the working machine and commit the result. Prevents silent breakage on next fresh install.</p>
+  </div>
+  <div class="card accent-border">
+    <h3>6. CLI-ify the one-shot scripts</h3>
+    <p class="note" style="color:var(--text)"><code>export_today.py</code>, <code>get_order.py</code>, <code>count_orders.py</code> all need manual code edits to change dates/order IDs. Add <code>argparse</code> to make them reusable without touching source.</p>
+  </div>
+</div>
+
+<hr>
+<p class="note" style="text-align:center">Generated by Claude Code · C:\gimpTest · 2026-06-22</p>
+
+</body>
+</html>

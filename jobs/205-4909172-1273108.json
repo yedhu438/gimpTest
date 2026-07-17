@@ -1,0 +1,34 @@
+{
+  "order_id": "205-4909172-1273108",
+  "template": "",
+  "zones": {
+    "front": {
+      "customer_image": null,
+      "emoji_text_image": null,
+      "text_lines": [
+        "Andy"
+      ],
+      "font_name": "Arial",
+      "font_ps_name": "Arial-BoldMT",
+      "font_family": "Arial",
+      "font_style": "Bold",
+      "colour_hex": "#ffffff",
+      "label": "Front - Black",
+      "zone_w_px": 1197,
+      "zone_h_px": 567,
+      "preview_image": "65498349391922-frontpreview.jpg"
+    }
+  },
+  "output_path": "C:\\gimpTest\\Output\\2026-07-17\\DTF Front\\black\\205-4909172-1273108.psd",
+  "combined": true,
+  "canvas_w_px": 1197,
+  "canvas_h_px": 567,
+  "dpi": 320,
+  "type": "standard",
+  "text_replacements": {},
+  "colour_hex": "#ffffff",
+  "quantity": 1,
+  "items": [],
+  "multi_items": [],
+  "submitted_at": "2026-07-17T13:31:02.483192"
+}

@@ -1,0 +1,300 @@
+[18:47:36] [INFO] [268/310] 026-0480737-4069111  (1 items)  |  MenTee_WhtM
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [269/310] 205-5358020-1147547  (1 items)  |  FootballKidsTee_Red911
+[18:47:36] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:36] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:36] [INFO]   Skipping 026-9667960-9952341 — Emb & Rhine (manual process)
+[18:47:36] [INFO] [271/310] 204-6581448-6967522  (1 items)  |  MenTee_TDXXL
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [272/310] 205-8108560-2022702  (1 items)  |  MenTee_TDM
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [273/310] 202-4059336-5980309  (2 items)  |  PerFrance001_Tee_NvyL | PerFrance001_Tee_NvyL
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [274/310] 204-3704335-1896332  (1 items)  |  EngFBallset01Kids_Red78
+[18:47:36] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:36] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:36] [INFO] [275/310] 205-4900345-4886705  (1 items)  |  AnyTxtBabyVest_Wht03
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [276/310] 204-8269579-9223563  (2 items)  |  AnyTxtMenTee_RedM | AnyTxtMenTee_RedS
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [277/310] 026-8626227-6525145  (1 items)  |  COMenTee_NvyL
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [278/310] 204-8793880-1045144  (1 items)  |  FootballAdultTee_WhtS
+[18:47:36] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:36] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:36] [INFO] [279/310] 202-1725945-1735534  (1 items)  |  SingleBelt_Red
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [280/310] 205-9217240-0310730  (1 items)  |  ATPoloTee_BlkS
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [281/310] 202-6085613-5078708  (1 items)  |  FootballKidsTee_WhtS
+[18:47:36] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:36] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:36] [INFO] [282/310] 202-3946200-4180363  (1 items)  |  BackOnlyKidsTee_Wht911
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [283/310] 205-1978241-8253165  (1 items)  |  EngFootballKids_Tee_Pnk78
+[18:47:36] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:36] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:36] [INFO]   Skipping 206-6379493-7997144 — Emb & Rhine (manual process)
+[18:47:36] [INFO] [285/310] 026-1745233-1118754  (1 items)  |  BackOnlyKidsTee_Wht911
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [286/310] 205-8865753-1435557  (1 items)  |  EngFBallset01Kids_Red78
+[18:47:36] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:36] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:36] [INFO] [287/310] 205-7887653-2990747  (1 items)  |  MenTee_BlkXL
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [288/310] 202-2084694-9660310  (1 items)  |  AnyTxtTote_Blk
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [289/310] 204-1591728-4317966  (3 items)  |  MenTee_WhtM | MenTee_WhtS | MenTee_WhtL
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [290/310] 203-1838405-0192315  (2 items)  |  FootballAdultTee_WhtM | FootballAdultTee_WhtS
+[18:47:36] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:36] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:36] [INFO] [291/310] 206-7097663-3445153  (1 items)  |  BackOnlyKidsTee_Wht1213
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [292/310] 203-1191783-3112356  (1 items)  |  Car_keychain
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [293/310] 206-1080979-0723505  (1 items)  |  PerArgentina01_Tee_SkyBluXL
+[18:47:36] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:36] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:36] [INFO] [294/310] 202-1186523-5304365  (1 items)  |  AnyTextHat_WhtL/XL
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [295/310] 202-4884088-3581960  (1 items)  |  BackOnlyKidsTee_Wht1213
+[18:47:36] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:36] [FAIL]   FAIL  Photoshop not running
+[18:47:36] [INFO] [296/310] 026-9964857-3078737  (1 items)  |  FootballAdultTee_WhtM
+[18:47:36] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:36] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:36] [INFO] [297/310] 203-2279404-1152310  (1 items)  |  FootballbabyVEng_Red612
+[18:47:37] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:37] [FAIL]   FAIL  Photoshop not running
+[18:47:37] [INFO] [298/310] 204-1766246-4848301  (1 items)  |  LBalls01Tee_WhtL
+[18:47:37] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:37] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:37] [INFO] [299/310] 203-7540046-5441139  (1 items)  |  FootballbabyVEng_Red03
+[18:47:37] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:37] [FAIL]   FAIL  Photoshop not running
+[18:47:37] [INFO] [300/310] 203-0471191-0534713  (1 items)  |  MenTee_BlkL
+[18:47:37] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:37] [FAIL]   FAIL  Photoshop not running
+[18:47:37] [INFO] --- Progress 300/310  ok=0  fail=284 ---
+[18:47:37] [INFO] [301/310] 204-3854647-0402717  (1 items)  |  BackOnlyKidsTee_Wht1213
+[18:47:37] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:37] [FAIL]   FAIL  Photoshop not running
+[18:47:37] [INFO] [302/310] 206-9852526-8218746  (1 items)  |  WmnTee_PnkS
+[18:47:37] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:37] [FAIL]   FAIL  Photoshop not running
+[18:47:37] [INFO] [303/310] 204-1803196-0274741  (1 items)  |  BackOnly_Tee_WhtM
+[18:47:37] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:37] [FAIL]   FAIL  Photoshop not running
+[18:47:37] [INFO] [304/310] 203-9648069-4909950  (1 items)  |  PerArgentina01_Tee_SkyBluL
+[18:47:37] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:37] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:37] [INFO] [305/310] 204-1263954-7250721  (1 items)  |  BackOnlyKidsTee_Wht911
+[18:47:37] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:37] [FAIL]   FAIL  Photoshop not running
+[18:47:37] [INFO] [306/310] 026-3899608-2737926  (1 items)  |  MenTee_BlkL
+[18:47:37] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:37] [FAIL]   FAIL  Photoshop not running
+[18:47:37] [INFO] [307/310] 203-1969425-6047527  (2 items)  |  FootballKidsTee_Red78 | FootballKidsTee_Red78
+[18:47:37] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:37] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:37] [INFO] [308/310] 202-4800668-0708349  (1 items)  |  AnyTextHat_BlkL/XL
+[18:47:37] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:37] [FAIL]   FAIL  Photoshop not running
+[18:47:37] [INFO] [309/310] 203-9846859-0651510  (2 items)  |  PEngFB01PoloJersy_RedWhtXL | PEngFB01PoloJersy_RedWhtL
+[18:47:37] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:47:37] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:47:37] [INFO] [310/310] 204-9987825-9597928  (1 items)  |  KidsTee_Wht1213
+[18:47:37] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:47:37] [FAIL]   FAIL  Photoshop not running
+[18:47:37] [INFO] ============================================================
+[18:47:37] [INFO] DONE  0 OK  |  294 FAILED  |  16 SKIPPED (Emb & Rhine)  |  Output: C:\gimpTest\Output\2026-07-13
+[18:47:37] [INFO] ============================================================
+[18:47:37] [INFO] Sleeping 30s...
+[18:48:07] [INFO] ============================================================
+[18:48:07] [INFO] Varsany Batch Processor  2026-07-12 18:48:07
+[18:48:07] [INFO] Resolution : 320 DPI  (125.98 px/cm)
+[18:48:07] [INFO] Images     : downloaded on-demand from http://www.crssoft.co.uk/CustomOrderImages/
+[18:48:07] [INFO] Fonts      : ['notocoloremojiregular', 'abelregular', 'arialbd', 'bebasneueregular', 'bouqetdisplay', 'camoblock', 'chewyregular', 'colorfulblocks', 'cozywinter', 'fondamentoregular', 'football', 'latoregular', 'paintsplashesrainbow', 'permanentmarkerregular', 'refractionray', 'robotoregular', 'russooneregular', 'smartkids', 'soccerarmy', 'spiderweb', 'ultraregular', 'wavemermaid', '04embroideryfont', '04b30', '07embroideryfont', '11embroideryfont', '3dflowersvg', '3djigsawpuzzlefont32', '3prot', '4staff', '7hours', 'athuluthregular', 'a10e', 'a13e', 'a14hl', 'a14mi', 'a15i', 'a7r', 'aarco', 'abelprobold', 'abelpro', 'abelv18latinregular(2)', 'abhakti', 'abrassb', 'abrazoscriptssibold', 'abrazoscriptssi', 'abrazoscriptsskbold', 'abrazoscriptsskbolditalic', 'abriltitlingw01regular', 'absalom', 'absender1', 'acablsbi', 'academyengravedletplain', 'acaslonproregular', 'acbsh', 'acmosi', 'acticsb', 'actics', 'actionis', 'activacapssskregular', 'aderadisplaysskregular', 'adks', 'adobecaslonprobold', 'afirelovepersonaluse', 'agatesskbold', 'agatha', 'agathobold', 'agathoboldcaps', 'agatholight', 'agathomedium', 'agathoregular', 'agatsbi', 'agencyb', 'agencyr', 'akenaten', 'akhbarmtbold', 'alakob', 'albbi', 'albertaextraboldregular', 'alcoppln', 'ald401b', 'ald721b', 'ald721bi', 'aldasin', 'alfaslaboneregularotf', 'alger', 'algerianregular', 'algiersn', 'alibabo', 'alibi', 'alienato', 'allegron', 'allember', 'alleyster(demo)', 'allheart', 'almaroseblack', 'alpine', 'altgot2n', 'alton', 'alnevradapersonaluseonly', 'amazone', 'ambrosia', 'amelia', 'amelian', 'americanbeautydemo', 'amigavp', 'amihin2', 'amihindi', 'amina2', 'aminet', 'amrcanxb', 'amrgarbi', 'amsterdamsignature', 'amyn', 'anairapersonaluse.regular', 'anastas', 'anekgujarati[wdth,wght]', 'anglic', 'anihin3', 'anishafree', 'anmcsh', 'anmosh', 'annfo', 'antigonibold', 'antigonimed', 'antquab', 'antquabi', 'antquai', 'antrysanspersonaluseonly', 'antsvalleypersonaluse', 'apollomtstdregular', 'apollomtstd', 'arabian', 'arati', 'arb', 'arbli', 'architen', 'archivegaramondexpbold', 'arenski', 'arial', 'arialbd0', 'arialbi', 'arialbi0', 'ariali', 'ariali0', 'arialn', 'arialnb', 'arialnbi', 'arialni', 'arialuni', 'arial0', 'ariblk', 'ariblk0', 'aristoni', 'arlrdbd', 'armycamouflage', 'arndboen', 'arnoldbo', 'arpan', 'arpan0', 'arpan1', 'arpan2', 'arpanh1', 'arruski', 'arsisi', 'artis', 'ashok', 'asianart', 'astula', 'astute', 'atlainln', 'author', 'auttan', 'avenuedemadison', 'avenue', 'ayliademo', 'b12e', 'baberegular', 'babyaletha', 'babygemoy', 'bacca', 'bacci', 'baddssi', 'baddss', 'badfilms', 'badmann', 'bahamaln', 'bahamasb', 'bahamasn', 'bahiss', 'bahnschrift', 'bakery', 'balerina', 'balldss', 'ballemi', 'balleten', 'ballroon', 'balonb', 'balonxb', 'balsam', 'bancoregular', 'banco', 'bandabun', 'bandirascriptdemo', 'banffn', 'banffno', 'bangkokb', 'bangkokn', 'bangn', 'baratz', 'barbatri', 'barbdcs', 'bardssb', 'barrds', 'barrs', 'barwss', 'baseballstyleregular', 'baskobi', 'baskvill', 'bassoonb', 'bassoonn', 'bastss', 'batavia', 'bauhs93', 'baysidetavernsregular', 'beachman', 'beachwoodsans', 'beachwood', 'bearpaw', 'beauds', 'beautyanethyattfdemo', 'bebaskai', 'bedrockn', 'beearmybee2', 'beearmyhoney', 'beearmyhoneycomb2', 'beearmystripe', 'beehiven', 'beetlj', 'beijls', 'bell', 'bellb', 'bellfortdrawthin', 'belli', 'berndtb', 'bernhc', 'bertramn', 'bestvalentinaotf', 'bestie', 'bestybeige', 'bigfss', 'bigtopn', 'billgatesdemo', 'binsh', 'bipin', 'bkant', 'blabdssi', 'blackhawk', 'blacklutter', 'blantickscript', 'blarss', 'blimpo', 'bloodrac', 'bloody', 'bluecomposition', 'bluesmalone', 'bnhrdmbi', 'bobbo', 'bobz', 'bod', 'bodonbk', 'bodonibdbtbolditalic', 'bodonibdbtbold', 'bodonibkbtbookitalic', 'bodonibkbtbook', 'bodopssi', 'bodrcsbi', 'bodyguarddf', 'bod0', 'bodb', 'bodbi', 'bodblai', 'bodblar', 'bodcb', 'bodcbi', 'bodci', 'bodcr', 'bodi', 'bodpstc', 'bodr', 'boffls', 'bogartblacktrial', 'bogartbolditalictrial', 'bogartboldtrial', 'bogartsemibolditalictrial', 'bogartsemiboldtrial', 'bokr36w', 'bokr75w', 'bokr76w', 'boldstyl', 'boldyguarditalic', 'boldyguardregular', 'boltla', 'bomsla', 'bonalsb', 'bonasb', 'bonas', 'bondolih', 'bono', 'bonzai', 'bonzcs', 'bonzdcs', 'bookmandemiregular', 'bookmand', 'bookos', 'bookosb', 'bookosbi', 'bookosi', 'bookworm', 'bordos', 'bosanovn', 'bosdsh', 'bout', 'boyadcs', 'bradhitc', 'brad', 'braesfs', 'bragga', 'brasikadisplaytrial', 'bravds', 'bravengn', 'bravon', 'bravsts', 'brdbtf2', 'brdbtfi', 'brdbtfl', 'breas', 'brees', 'bremenb', 'brensss', 'brensssb', 'brhrdbc', 'brightheart', 'brightsunday', 'brighton', 'brigss', 'briquetn', 'briskn', 'britanic', 'brlnsb', 'brlnsdb', 'brlnsr', 'broadw', 'broassb', 'brocs', 'brodyn', 'brondcs', 'bronxn', 'brookman', 'brous', 'brshflsh', 'brshstk', 'bruolsti', 'brus445n', 'brus738n', 'brusds', 'brushpoint', 'brushsci', 'brushscn', 'brushsc', 'bssym7', 'bubbledream', 'bubblegum', 'bucas', 'buchessk', 'buchsb', 'buckgm', 'bucklanescriptpersonaluseonly', 'bucksb', 'buddy', 'buenssb', 'buenss', 'bugass', 'builttitlingsb', 'bulanramadhanyzryl', 'bungssb', 'burnstow', 'busink', 'buskern', 'bwcomposition', 'cacsh', 'caddssb', 'cadissbi', 'caimssb', 'caimss', 'cairoregular', 'calibri', 'calibrib', 'calibrii', 'calibril', 'calibrili', 'calibriz', 'calids', 'califb', 'califi', 'califr', 'caligorn', 'calist', 'calistb', 'calistbi', 'calisti', 'callb', 'cambriab', 'cambriai', 'cambriaz', 'camo', 'campaign', 'campanascriptpersonaluseonly', 'cancunn', 'candara', 'candarab', 'candarai', 'candaral', 'candarali', 'candaraz', 'candsbls', 'candssb', 'candss', 'candybeans', 'candycanearmy1', 'candycanearmy31', 'candycanechristmas', 'caness', 'cano', 'cansblsb', 'cantcs', 'cantine', 'captainnelsonserif', 'caramelandvanilla', 'carattereregular', 'carinon', 'carleton', 'carndcs', 'carnssbi', 'carrotsfree', 'caslos', 'casmira', 'casprofn', 'cassia', 'castantn', 'castelar', 'castleb', 'castlen', 'casusb', 'casanti', 'casantn', 'catads', 'catalishhuntera', 'cayass', 'caylastylish', 'ccelephantmentallw10bold', 'celebrate', 'censcbk', 'centaur', 'centschbkcyrillbtbolditalic', 'centschbkcyrillbtbold', 'centschbkcyrillbtitalic', 'centschbkcyrillbtroman', 'century', 'century725cnbt', 'century751btitalic', 'century751btroman', 'century751no2btbolditalic', 'century751no2btbold', 'century751no2btitalic', 'century751no2btroman', 'century751sebdbtsemibolditalic', 'century751sebdbtsemibold', 'chalisaoctaviafontdby7ntypes', 'chalkn', 'chansbls', 'charlb', 'charleswrightbold', 'charln', 'charmingalphabet', 'chbsh', 'chcsh', 'checqssb', 'cherryblossom', 'cherry', 'chewyv18latinregular', 'chiladaicguno', 'chiller', 'chipsss', 'chipsssb', 'chisel', 'chitra', 'chlthmbi', 'chorls', 'chpsh', 'christie', 'christmasbellpersonaluse', 'christmascomeback', 'christmasplaidarmy1', 'christmasshepherdttf', 'christmassparklepersonal', 'chros', 'chubby', 'helveticabold', 'helvetica', 'latobold', 'tropicalflower', 'vinylfont', 'decterm', 'agencyr0', 'antquabi0', 'antquab0', 'antquai0', 'arbli0', 'arialbd1', 'arialbi1', 'ariali1', 'arialnbi0', 'arialnb0', 'arialni0', 'arialn0', 'arialuni0', 'arial1', 'ariblk1', 'bahnschrift0', 'bahnschrift1', 'baskvill0', 'bauhs930', 'bellb0', 'belli0', 'bell0', 'bernhc0', 'bkant0', 'bookosbi0', 'bookosb0', 'bookosi0', 'bookos0', 'bssym70', 'calibrib0', 'calibrib1', 'calibrii0', 'calibrii1', 'calibrili0', 'calibrili1', 'calibril0', 'calibril1', 'calibriz0', 'calibriz1', 'calibri0', 'calibri1', 'calistbi0', 'calistb0', 'calisti0', 'calist0', 'cambriab0', 'cambriab1', 'cambriai0', 'cambriai1', 'cambriaz0', 'cambriaz1', 'candarab0', 'candarab1', 'candarai0', 'candarai1', 'candarali0', 'candarali1', 'candaral0', 'candaral1', 'candaraz0', 'candaraz1', 'candara0', 'candara1', 'censcbk0', 'century0', 'comic', 'comicbd', 'comici', 'comicz', 'consola', 'consolab', 'consolai', 'consolaz', 'constan', 'constanb', 'constani', 'constanz', 'corbel', 'corbelb', 'corbeli', 'corbell', 'corbelli', 'corbelz', 'cour', 'courbd', 'courbi', 'couri', 'ebrima', 'ebrimabd', 'framd', 'framdit', 'gabriola', 'gadugi', 'gadugib', 'georgia', 'georgiab', 'georgiai', 'georgiaz', 'helveticabold0', 'helvetica0', 'himalaya', 'impact', 'inkfree', 'javatext', 'leelauib', 'leelawui', 'leeluisl', 'lucon', 'l10646', 'malgun', 'malgunbd', 'malgunsl', 'marlett', 'micross', 'mmrtext', 'mmrtextb', 'monbaiti', 'msyi', 'mvboli', 'nirmala', 'nirmalab', 'nirmalas', 'ntailu', 'ntailub', 'pala', 'palab', 'palabi', 'palai', 'phagspa', 'phagspab', 'segmdl2', 'segoepr', 'segoeprb', 'segoesc', 'segoescb', 'segoeui', 'segoeuib', 'segoeuii', 'segoeuil', 'segoeuisl', 'segoeuiz', 'seguibl', 'seguibli', 'seguiemj', 'seguihis', 'seguili', 'seguisb', 'seguisbi', 'seguisli', 'seguisym', 'simsunb', 'simsunextg', 'sitkavfitalic', 'sitkavf', 'sylfaen', 'symbol', 'tahoma', 'tahomabd', 'taile', 'taileb', 'times', 'timesbd', 'timesbi', 'timesi', 'trebuc', 'trebucbd', 'trebucbi', 'trebucit', 'verdana', 'verdanab', 'verdanai', 'verdanaz', 'webdings', 'wingding']
+[18:48:07] [INFO] ============================================================
+[18:48:08] [INFO] Orders to process: 363
+[18:48:08] [INFO] Unique orders: 310  (from 363 rows)
+[18:48:08] [INFO]   Skipping 026-5692112-0590733 — Emb & Rhine (manual process)
+[18:48:08] [INFO]   Skipping 026-1483575-5346709 — Emb & Rhine (manual process)
+[18:48:08] [INFO] [3/310] 204-8320842-1762707  (3 items)  |  AdultPoloTee_WhtM | AdultPoloTee_WhtL | AdultPoloTee_WhtXL
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO] [4/310] 205-4082574-5126746  (4 items)  |  AnyTxtOverSizeTee_WhtS | AnyTxtOverSizeTee_WhtM | AnyTxtOverSizeTee_WhtXL | AnyTxtOverSizeTee_WhtL
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO]   Skipping 204-7431589-6226729 — Emb & Rhine (manual process)
+[18:48:08] [INFO]   Skipping 204-0087291-6501112 — Emb & Rhine (manual process)
+[18:48:08] [INFO]   Skipping 202-9851529-4469145 — Emb & Rhine (manual process)
+[18:48:08] [INFO]   Skipping 205-0181183-9005114 — Emb & Rhine (manual process)
+[18:48:08] [INFO] [9/310] 205-2404821-0999557  (3 items)  |  WmnTee_PnkM | WmnTee_PnkL | WmnTee_PnkS
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO]   Skipping 202-4217192-3235552 — Emb & Rhine (manual process)
+[18:48:08] [INFO]   Skipping 204-2483207-9565919 — Emb & Rhine (manual process)
+[18:48:08] [INFO] [12/310] 206-2104670-2986743  (2 items)  |  MenTee_BlkM | MenTee_BlkM
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO]   Skipping 204-8733304-3881953 — Emb & Rhine (manual process)
+[18:48:08] [INFO] [14/310] 203-0271566-4240377  (1 items)  |  PerArgentina01_Tee_SkyBluS
+[18:48:08] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:08] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:08] [INFO] [15/310] 202-5835577-0029924  (1 items)  |  FootballAdultTee_RedXL
+[18:48:08] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:08] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:08] [INFO] [16/310] 206-7732694-8401129  (1 items)  |  FootballAdultTee_WhtS
+[18:48:08] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:08] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:08] [INFO] [17/310] 202-4698501-3053958  (1 items)  |  SingleBelt_Grn
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO] [18/310] 205-4362691-1474734  (1 items)  |  Knitting03_JuteBag
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO] [19/310] 026-4617134-3797902  (1 items)  |  WmnTee_PnkM
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO] [20/310] 026-5350076-2297137  (2 items)  |  FootballAdultTee_WhtS | FootballAdultTee_RedS
+[18:48:08] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:08] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:08] [INFO] [21/310] 202-7306385-7245940  (1 items)  |  FootballbabyVEng_Red03
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO] [22/310] 204-9609422-6616308  (3 items)  |  PNFBall01_Tee_OrgXXL | PNFBall01_Tee_OrgXXL | PNFBall01KidsTee_Org56
+[18:48:08] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:08] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:08] [INFO] [23/310] 203-9273623-1749938  (1 items)  |  PerArgentina01_Tee_SkyBluXL
+[18:48:08] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:08] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:08] [INFO] [24/310] 026-0294909-5331548  (1 items)  |  Gymnastichoodie06KidsHood_Nvy910
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO] [25/310] 204-9140577-8741941  (1 items)  |  BackOnlyKidsTee_Wht1213
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO] [26/310] 203-8921083-2903543  (1 items)  |  FootballbabyVEng_Wht03
+[18:48:08] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:08] [FAIL]   FAIL  Photoshop not running
+[18:48:08] [INFO] [27/310] 206-1292573-7462730  (2 items)  |  FootballKidsTee_Wht911 | FootballKidsTee_Wht78
+[18:48:09] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:09] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:09] [INFO] [28/310] 026-1198751-4463540  (1 items)  |  FootballAdultTee_RedXXL
+[18:48:09] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:09] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:09] [INFO] [29/310] 026-1295317-2202745  (1 items)  |  FootballKidsTee_Red56
+[18:48:09] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:09] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:09] [INFO] [30/310] 204-9319033-0144341  (1 items)  |  FootballAdultTee_RedL
+[18:48:09] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:09] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:09] [INFO] [31/310] 203-1376861-3553108  (1 items)  |  FootballAdultTee_WhtS
+[18:48:09] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:09] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:09] [INFO] [32/310] 202-3992519-0161922  (1 items)  |  PerArgentina01_Tee_SkyBluXXL
+[18:48:09] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:09] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:09] [INFO] [33/310] 026-3318697-2206738  (1 items)  |  MenTee_WhtM
+[18:48:09] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:09] [FAIL]   FAIL  Photoshop not running
+[18:48:09] [INFO] [34/310] 202-4333825-1519528  (2 items)  |  WalesRugby01KidsTee_Red1213 | WalesRugby01KidsTee_Red78
+[18:48:09] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:09] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:09] [INFO] [35/310] 204-5314814-2731535  (1 items)  |  PoloTee_NvyL
+[18:48:09] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:09] [FAIL]   FAIL  Photoshop not running
+[18:48:09] [INFO] [36/310] 202-0442418-0192349  (1 items)  |  MenTee_FusXL
+[18:48:09] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:09] [FAIL]   FAIL  Photoshop not running
+[18:48:09] [INFO] [37/310] 026-2773355-8920360  (1 items)  |  FootballAdultTee_RedM
+[18:48:10] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:10] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:10] [INFO] [38/310] 202-6510683-7724334  (1 items)  |  FootballbabyVEng_Wht612
+[18:48:10] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:10] [FAIL]   FAIL  Photoshop not running
+[18:48:10] [INFO] [39/310] 026-6832467-8375549  (1 items)  |  KidsTee_Red1213
+[18:48:10] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:10] [FAIL]   FAIL  Photoshop not running
+[18:48:10] [INFO] [40/310] 204-7928145-8318706  (1 items)  |  FootballAdultTee_WhtM
+[18:48:11] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:11] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:11] [INFO] [41/310] 202-3722404-4055526  (3 items)  |  KidsTee_Wht12 | KidsTee_Wht56 | KidsTee_Wht911
+[18:48:11] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:11] [FAIL]   FAIL  Photoshop not running
+[18:48:11] [INFO] [42/310] 203-2859049-8576312  (1 items)  |  FootballbabyVEng_Red612
+[18:48:11] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:11] [FAIL]   FAIL  Photoshop not running
+[18:48:11] [INFO] [43/310] 026-4786044-1804344  (1 items)  |  PerArgentina01_Tee_SkyBluL
+[18:48:11] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:11] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:11] [INFO] [44/310] 205-2110811-5188345  (1 items)  |  MenTee_BlkXL
+[18:48:11] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:11] [FAIL]   FAIL  Photoshop not running
+[18:48:11] [INFO] [45/310] 205-5815961-9239555  (1 items)  |  PEngFB01PoloJersy_WhtNvyM
+[18:48:11] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:11] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:11] [INFO] [46/310] 205-8750970-3209963  (2 items)  |  FootballAdultTee_WhtM | FootballAdultTee_RedL
+[18:48:11] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:11] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:11] [INFO] [47/310] 202-5099493-4773156  (1 items)  |  WmnTee_PnkXL
+[18:48:11] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:11] [FAIL]   FAIL  Photoshop not running
+[18:48:11] [INFO] [48/310] 026-6627559-8074728  (1 items)  |  FootballbabyVEng_Red03
+[18:48:11] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:11] [FAIL]   FAIL  Photoshop not running
+[18:48:11] [INFO] [49/310] 203-4732932-9204305  (1 items)  |  FootballbabyVEng_Red36
+[18:48:12] [FAIL]   UXP Bridge FAILED: Photoshop not running
+[18:48:12] [FAIL]   FAIL  Photoshop not running
+[18:48:12] [INFO] [50/310] 204-6022410-9056335  (1 items)  |  PEngFB01PoloJersy_RedWhtM
+[18:48:15] [FAIL]   Semi-custom FAILED: Photoshop not running — cannot process semi-custom order
+[18:48:15] [FAIL]   FAIL  Photoshop not running — cannot process semi-custom order
+[18:48:15] [INFO] --- Progress 50/310  ok=0  fail=41 ---
+[18:48:15] [INFO] [51/310] 205-5592669-8997901  (1 items)  |  FootballKidsTee_Red911
+[18:48:16] [INFO]   [semi-custom] item: name='Freddie'  number='14'  colour=#d1c9c9
+[18:48:16] [INFO]   [semi-custom] 1 item(s) | template: england Football Adult.psd
+[18:48:16] [INFO]   [semi-custom] batch 1/1: 1 slot(s) -> 205-5592669-8997901.psd
+[PS Bridge] Job submitted: 205-5592669-8997901
+[PS Bridge] Timeout: 205-5592669-8997901
+[18:58:18] [FAIL]   Semi-custom FAILED: Photoshop job timed out or errored (batch 1)
+[18:58:18] [FAIL]   FAIL  Photoshop job timed out or errored (batch 1)
+[18:58:18] [INFO] [52/310] 202-7032572-2396337  (1 items)  |  FootballAdultTee_RedL
+[18:58:18] [INFO]   [semi-custom] item: name='MICHELLE'  number='66'  colour=#d1c9c9
+[18:58:18] [INFO]   [semi-custom] 1 item(s) | template: england Football Adult.psd
+[18:58:18] [INFO]   [semi-custom] batch 1/1: 1 slot(s) -> 202-7032572-2396337.psd
+[PS Bridge] Job submitted: 202-7032572-2396337
+[19:01:50] [INFO] Daemon started — polling every 30s.  Press Ctrl+C to stop.
+[19:01:50] [INFO] ============================================================
+[19:01:50] [INFO] Varsany Batch Processor  2026-07-12 19:01:50
+[19:01:50] [INFO] Resolution : 320 DPI  (125.98 px/cm)
+[19:01:50] [INFO] Images     : downloaded on-demand from http://www.crssoft.co.uk/CustomOrderImages/
+[19:01:50] [INFO] Fonts      : ['notocoloremojiregular', 'abelregular', 'arialbd', 'bebasneueregular', 'bouqetdisplay', 'camoblock', 'chewyregular', 'colorfulblocks', 'cozywinter', 'fondamentoregular', 'football', 'latoregular', 'paintsplashesrainbow', 'permanentmarkerregular', 'refractionray', 'robotoregular', 'russooneregular', 'smartkids', 'soccerarmy', 'spiderweb', 'ultraregular', 'wavemermaid', '04embroideryfont', '04b30', '07embroideryfont', '11embroideryfont', '3dflowersvg', '3djigsawpuzzlefont32', '3prot', '4staff', '7hours', 'athuluthregular', 'a10e', 'a13e', 'a14hl', 'a14mi', 'a15i', 'a7r', 'aarco', 'abelprobold', 'abelpro', 'abelv18latinregular(2)', 'abhakti', 'abrassb', 'abrazoscriptssibold', 'abrazoscriptssi', 'abrazoscriptsskbold', 'abrazoscriptsskbolditalic', 'abriltitlingw01regular', 'absalom', 'absender1', 'acablsbi', 'academyengravedletplain', 'acaslonproregular', 'acbsh', 'acmosi', 'acticsb', 'actics', 'actionis', 'activacapssskregular', 'aderadisplaysskregular', 'adks', 'adobecaslonprobold', 'afirelovepersonaluse', 'agatesskbold', 'agatha', 'agathobold', 'agathoboldcaps', 'agatholight', 'agathomedium', 'agathoregular', 'agatsbi', 'agencyb', 'agencyr', 'akenaten', 'akhbarmtbold', 'alakob', 'albbi', 'albertaextraboldregular', 'alcoppln', 'ald401b', 'ald721b', 'ald721bi', 'aldasin', 'alfaslaboneregularotf', 'alger', 'algerianregular', 'algiersn', 'alibabo', 'alibi', 'alienato', 'allegron', 'allember', 'alleyster(demo)', 'allheart', 'almaroseblack', 'alpine', 'altgot2n', 'alton', 'alnevradapersonaluseonly', 'amazone', 'ambrosia', 'amelia', 'amelian', 'americanbeautydemo', 'amigavp', 'amihin2', 'amihindi', 'amina2', 'aminet', 'amrcanxb', 'amrgarbi', 'amsterdamsignature', 'amyn', 'anairapersonaluse.regular', 'anastas', 'anekgujarati[wdth,wght]', 'anglic', 'anihin3', 'anishafree', 'anmcsh', 'anmosh', 'annfo', 'antigonibold', 'antigonimed', 'antquab', 'antquabi', 'antquai', 'antrysanspersonaluseonly', 'antsvalleypersonaluse', 'apollomtstdregular', 'apollomtstd', 'arabian', 'arati', 'arb', 'arbli', 'architen', 'archivegaramondexpbold', 'arenski', 'arial', 'arialbd0', 'arialbi', 'arialbi0', 'ariali', 'ariali0', 'arialn', 'arialnb', 'arialnbi', 'arialni', 'arialuni', 'arial0', 'ariblk', 'ariblk0', 'aristoni', 'arlrdbd', 'armycamouflage', 'arndboen', 'arnoldbo', 'arpan', 'arpan0', 'arpan1', 'arpan2', 'arpanh1', 'arruski', 'arsisi', 'artis', 'ashok', 'asianart', 'astula', 'astute', 'atlainln', 'author', 'auttan', 'avenuedemadison', 'avenue', 'ayliademo', 'b12e', 'baberegular', 'babyaletha', 'babygemoy', 'bacca', 'bacci', 'baddssi', 'baddss', 'badfilms', 'badmann', 'bahamaln', 'bahamasb', 'bahamasn', 'bahiss', 'bahnschrift', 'bakery', 'balerina', 'balldss', 'ballemi', 'balleten', 'ballroon', 'balonb', 'balonxb', 'balsam', 'bancoregular', 'banco', 'bandabun', 'bandirascriptdemo', 'banffn', 'banffno', 'bangkokb', 'bangkokn', 'bangn', 'baratz', 'barbatri', 'barbdcs', 'bardssb', 'barrds', 'barrs', 'barwss', 'baseballstyleregular', 'baskobi', 'baskvill', 'bassoonb', 'bassoonn', 'bastss', 'batavia', 'bauhs93', 'baysidetavernsregular', 'beachman', 'beachwoodsans', 'beachwood', 'bearpaw', 'beauds', 'beautyanethyattfdemo', 'bebaskai', 'bedrockn', 'beearmybee2', 'beearmyhoney', 'beearmyhoneycomb2', 'beearmystripe', 'beehiven', 'beetlj', 'beijls', 'bell', 'bellb', 'bellfortdrawthin', 'belli', 'berndtb', 'bernhc', 'bertramn', 'bestvalentinaotf', 'bestie', 'bestybeige', 'bigfss', 'bigtopn', 'billgatesdemo', 'binsh', 'bipin', 'bkant', 'blabdssi', 'blackhawk', 'blacklutter', 'blantickscript', 'blarss', 'blimpo', 'bloodrac', 'bloody', 'bluecomposition', 'bluesmalone', 'bnhrdmbi', 'bobbo', 'bobz', 'bod', 'bodonbk', 'bodonibdbtbolditalic', 'bodonibdbtbold', 'bodonibkbtbookitalic', 'bodonibkbtbook', 'bodopssi', 'bodrcsbi', 'bodyguarddf', 'bod0', 'bodb', 'bodbi', 'bodblai', 'bodblar', 'bodcb', 'bodcbi', 'bodci', 'bodcr', 'bodi', 'bodpstc', 'bodr', 'boffls', 'bogartblacktrial', 'bogartbolditalictrial', 'bogartboldtrial', 'bogartsemibolditalictrial', 'bogartsemiboldtrial', 'bokr36w', 'bokr75w', 'bokr76w', 'boldstyl', 'boldyguarditalic', 'boldyguardregular', 'boltla', 'bomsla', 'bonalsb', 'bonasb', 'bonas', 'bondolih', 'bono', 'bonzai', 'bonzcs', 'bonzdcs', 'bookmandemiregular', 'bookmand', 'bookos', 'bookosb', 'bookosbi', 'bookosi', 'bookworm', 'bordos', 'bosanovn', 'bosdsh', 'bout', 'boyadcs', 'bradhitc', 'brad', 'braesfs', 'bragga', 'brasikadisplaytrial', 'bravds', 'bravengn', 'bravon', 'bravsts', 'brdbtf2', 'brdbtfi', 'brdbtfl', 'breas', 'brees', 'bremenb', 'brensss', 'brensssb', 'brhrdbc', 'brightheart', 'brightsunday', 'brighton', 'brigss', 'briquetn', 'briskn', 'britanic', 'brlnsb', 'brlnsdb', 'brlnsr', 'broadw', 'broassb', 'brocs', 'brodyn', 'brondcs', 'bronxn', 'brookman', 'brous', 'brshflsh', 'brshstk', 'bruolsti', 'brus445n', 'brus738n', 'brusds', 'brushpoint', 'brushsci', 'brushscn', 'brushsc', 'bssym7', 'bubbledream', 'bubblegum', 'bucas', 'buchessk', 'buchsb', 'buckgm', 'bucklanescriptpersonaluseonly', 'bucksb', 'buddy', 'buenssb', 'buenss', 'bugass', 'builttitlingsb', 'bulanramadhanyzryl', 'bungssb', 'burnstow', 'busink', 'buskern', 'bwcomposition', 'cacsh', 'caddssb', 'cadissbi', 'caimssb', 'caimss', 'cairoregular', 'calibri', 'calibrib', 'calibrii', 'calibril', 'calibrili', 'calibriz', 'calids', 'califb', 'califi', 'califr', 'caligorn', 'calist', 'calistb', 'calistbi', 'calisti', 'callb', 'cambriab', 'cambriai', 'cambriaz', 'camo', 'campaign', 'campanascriptpersonaluseonly', 'cancunn', 'candara', 'candarab', 'candarai', 'candaral', 'candarali', 'candaraz', 'candsbls', 'candssb', 'candss', 'candybeans', 'candycanearmy1', 'candycanearmy31', 'candycanechristmas', 'caness', 'cano', 'cansblsb', 'cantcs', 'cantine', 'captainnelsonserif', 'caramelandvanilla', 'carattereregular', 'carinon', 'carleton', 'carndcs', 'carnssbi', 'carrotsfree', 'caslos', 'casmira', 'casprofn', 'cassia', 'castantn', 'castelar', 'castleb', 'castlen', 'casusb', 'casanti', 'casantn', 'catads', 'catalishhuntera', 'cayass', 'caylastylish', 'ccelephantmentallw10bold', 'celebrate', 'censcbk', 'centaur', 'centschbkcyrillbtbolditalic', 'centschbkcyrillbtbold', 'centschbkcyrillbtitalic', 'centschbkcyrillbtroman', 'century', 'century725cnbt', 'century751btitalic', 'century751btroman', 'century751no2btbolditalic', 'century751no2btbold', 'century751no2btitalic', 'century751no2btroman', 'century751sebdbtsemibolditalic', 'century751sebdbtsemibold', 'chalisaoctaviafontdby7ntypes', 'chalkn', 'chansbls', 'charlb', 'charleswrightbold', 'charln', 'charmingalphabet', 'chbsh', 'chcsh', 'checqssb', 'cherryblossom', 'cherry', 'chewyv18latinregular', 'chiladaicguno', 'chiller', 'chipsss', 'chipsssb', 'chisel', 'chitra', 'chlthmbi', 'chorls', 'chpsh', 'christie', 'christmasbellpersonaluse', 'christmascomeback', 'christmasplaidarmy1', 'christmasshepherdttf', 'christmassparklepersonal', 'chros', 'chubby', 'helveticabold', 'helvetica', 'latobold', 'tropicalflower', 'vinylfont', 'decterm', 'agencyr0', 'antquabi0', 'antquab0', 'antquai0', 'arbli0', 'arialbd1', 'arialbi1', 'ariali1', 'arialnbi0', 'arialnb0', 'arialni0', 'arialn0', 'arialuni0', 'arial1', 'ariblk1', 'bahnschrift0', 'bahnschrift1', 'baskvill0', 'bauhs930', 'bellb0', 'belli0', 'bell0', 'bernhc0', 'bkant0', 'bookosbi0', 'bookosb0', 'bookosi0', 'bookos0', 'bssym70', 'calibrib0', 'calibrib1', 'calibrii0', 'calibrii1', 'calibrili0', 'calibrili1', 'calibril0', 'calibril1', 'calibriz0', 'calibriz1', 'calibri0', 'calibri1', 'calistbi0', 'calistb0', 'calisti0', 'calist0', 'cambriab0', 'cambriab1', 'cambriai0', 'cambriai1', 'cambriaz0', 'cambriaz1', 'candarab0', 'candarab1', 'candarai0', 'candarai1', 'candarali0', 'candarali1', 'candaral0', 'candaral1', 'candaraz0', 'candaraz1', 'candara0', 'candara1', 'censcbk0', 'century0', 'comic', 'comicbd', 'comici', 'comicz', 'consola', 'consolab', 'consolai', 'consolaz', 'constan', 'constanb', 'constani', 'constanz', 'corbel', 'corbelb', 'corbeli', 'corbell', 'corbelli', 'corbelz', 'cour', 'courbd', 'courbi', 'couri', 'ebrima', 'ebrimabd', 'framd', 'framdit', 'gabriola', 'gadugi', 'gadugib', 'georgia', 'georgiab', 'georgiai', 'georgiaz', 'helveticabold0', 'helvetica0', 'himalaya', 'impact', 'inkfree', 'javatext', 'leelauib', 'leelawui', 'leeluisl', 'lucon', 'l10646', 'malgun', 'malgunbd', 'malgunsl', 'marlett', 'micross', 'mmrtext', 'mmrtextb', 'monbaiti', 'msyi', 'mvboli', 'nirmala', 'nirmalab', 'nirmalas', 'ntailu', 'ntailub', 'pala', 'palab', 'palabi', 'palai', 'phagspa', 'phagspab', 'segmdl2', 'segoepr', 'segoeprb', 'segoesc', 'segoescb', 'segoeui', 'segoeuib', 'segoeuii', 'segoeuil', 'segoeuisl', 'segoeuiz', 'seguibl', 'seguibli', 'seguiemj', 'seguihis', 'seguili', 'seguisb', 'seguisbi', 'seguisli', 'seguisym', 'simsunb', 'simsunextg', 'sitkavfitalic', 'sitkavf', 'sylfaen', 'symbol', 'tahoma', 'tahomabd', 'taile', 'taileb', 'times', 'timesbd', 'timesbi', 'timesi', 'trebuc', 'trebucbd', 'trebucbi', 'trebucit', 'verdana', 'verdanab', 'verdanai', 'verdanaz', 'webdings', 'wingding']
+[19:01:50] [INFO] ============================================================
+[19:01:52] [INFO] Orders to process: 374
+[19:01:52] [INFO] Unique orders: 320  (from 374 rows)
+[19:01:52] [INFO]   Skipping 026-5692112-0590733 — Emb & Rhine (manual process)
+[19:01:52] [INFO]   Skipping 026-1483575-5346709 — Emb & Rhine (manual process)
+[19:01:52] [INFO] [3/320] 204-8320842-1762707  (3 items)  |  AdultPoloTee_WhtM | AdultPoloTee_WhtL | AdultPoloTee_WhtXL
+[19:01:52] [INFO]   Multi-item built: AdultPoloTee_WhtM qty=3 zones=['back', 'pocket']
+[19:01:52] [INFO]   Multi-item built: AdultPoloTee_WhtL qty=5 zones=['back', 'pocket']
+[19:01:52] [INFO]   Multi-item built: AdultPoloTee_WhtXL qty=4 zones=['back', 'pocket']
+[PS Bridge] Job submitted: 204-8320842-1762707

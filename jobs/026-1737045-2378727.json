@@ -1,0 +1,34 @@
+{
+  "order_id": "026-1737045-2378727",
+  "template": "",
+  "zones": {
+    "front": {
+      "customer_image": null,
+      "emoji_text_image": null,
+      "text_lines": [
+        "Ollie"
+      ],
+      "font_name": "Abel",
+      "font_ps_name": "Abel-Regular",
+      "font_family": "Abel",
+      "font_style": "Regular",
+      "colour_hex": "#ffffff",
+      "label": "Front - White - 12-13",
+      "zone_w_px": 2898,
+      "zone_h_px": 3780,
+      "preview_image": "65498363840482-frontpreview.jpg"
+    }
+  },
+  "output_path": "C:\\gimpTest\\Output\\2026-07-17\\DTF Front\\white\\026-1737045-2378727.psd",
+  "combined": true,
+  "canvas_w_px": 2898,
+  "canvas_h_px": 3780,
+  "dpi": 320,
+  "type": "standard",
+  "text_replacements": {},
+  "colour_hex": "#ffffff",
+  "quantity": 1,
+  "items": [],
+  "multi_items": [],
+  "submitted_at": "2026-07-17T15:11:09.337859"
+}

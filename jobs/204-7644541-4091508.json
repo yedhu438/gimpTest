@@ -1,0 +1,32 @@
+{
+  "order_id": "204-7644541-4091508",
+  "template": "",
+  "zones": {
+    "front": {
+      "customer_image": "65494218815202-1-front.jpg",
+      "emoji_text_image": null,
+      "text_lines": [],
+      "font_name": "Arial",
+      "font_ps_name": "Arial-BoldMT",
+      "font_family": "Arial",
+      "font_style": "Bold",
+      "colour_hex": "#ffa500",
+      "label": "Front - Grey - XL",
+      "zone_w_px": 3780,
+      "zone_h_px": 3780,
+      "preview_image": "65494218815202-frontpreview.jpg"
+    }
+  },
+  "output_path": "C:\\gimpTest\\Output\\2026-07-17\\DTF Front\\204-7644541-4091508.psd",
+  "combined": true,
+  "canvas_w_px": 3780,
+  "canvas_h_px": 3780,
+  "dpi": 320,
+  "type": "standard",
+  "text_replacements": {},
+  "colour_hex": "#ffffff",
+  "quantity": 1,
+  "items": [],
+  "multi_items": [],
+  "submitted_at": "2026-07-17T13:01:01.783227"
+}
