@@ -437,10 +437,37 @@ async function processJob(jobEntry){
           // applySemiCustomText edits every named layer in one pass — no canvas tricks.
           await applySemiCustomText(items[0].text_replacements || {});
 
-          // Crop canvas to exactly the number of active slots (works for qty=1 too)
-          // job.canvas_h_px = height of one slot (px), job.quantity = number of items
+          // Delete unused-slot layers, then crop canvas to exactly the active slots.
+          // job.canvas_h_px = height of one slot (px), job.quantity = number of items (slots actually filled)
           if(job.canvas_h_px > 0){
             const qty = (job.quantity && job.quantity >= 1) ? Math.round(job.quantity) : 1;
+            log(qty+" item(s) in this order");
+
+            // docH here is the FULL template height, captured before any crop —
+            // dividing by slot height tells us how many slots the template has.
+            const maxSlots = Math.max(qty, Math.round(docH / job.canvas_h_px));
+
+            if(qty < maxSlots){
+              // Layer names repeat across slots (e.g. "Vector Smart Object copy 6"
+              // appears more than once in the SAME slot, and similar names repeat
+              // across different slots), so name matching can't tell slots apart.
+              // Position is reliable: each slot's layers cluster within that
+              // slot's own vertical band, so a layer's top edge / slot height
+              // tells us exactly which slot it belongs to.
+              const toDelete = [];
+              for(let li=0; li<doc.layers.length; li++){
+                const layer = doc.layers[li];
+                const slotIdx = Math.floor(Math.min(layer.bounds.top, layer.bounds.bottom) / job.canvas_h_px);
+                if(slotIdx >= qty && slotIdx < maxSlots) toDelete.push(layer);
+              }
+              log("Identified "+toDelete.length+" layer(s) to delete from "+(maxSlots-qty)+" unused slot(s)");
+              for(let di=0; di<toDelete.length; di++){
+                try{ toDelete[di].delete(); }  // synchronous DOM API — not a promise
+                catch(e){ log("  Could not delete layer '"+toDelete[di].name+"': "+e.message, true); }
+              }
+              log("Deleted "+toDelete.length+" layer(s) from "+(maxSlots-qty)+" unused slot(s)");
+            }
+
             const {w:docW} = await getDocSize();
             const targetH = qty * job.canvas_h_px + Math.max(0, qty - 1) * GAP_PX;
             await app.activeDocument.resizeCanvas(docW, targetH, constants.AnchorPosition.TOPLEFT);

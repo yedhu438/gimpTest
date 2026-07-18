@@ -2,7 +2,7 @@ import sys
 sys.path.insert(0, r"C:\gimpTest")
 from db import get_connection
 
-ORDER_ID = "026-2739602-6012300"
+ORDER_ID = "204-0742290-3536308"
 
 conn = get_connection()
 cur = conn.cursor()
