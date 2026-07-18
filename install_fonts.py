@@ -1,115 +1,123 @@
-import sys, os, json, shutil, subprocess
-sys.path.insert(0, r"C:\Users\yedhu\Desktop\gimpTest")
-from db import get_connection
+"""
+install_fonts.py — Install every project font as a real Windows/Photoshop font.
 
-# ── Get all unique fonts used in orders ───────────────────────────────────────
-conn = get_connection()
-cur  = conn.cursor()
-cur.execute("SELECT DISTINCT FrontFonts FROM tblCustomOrderDetails WHERE FrontFonts IS NOT NULL AND LTRIM(RTRIM(FrontFonts)) != ''")
-rows = cur.fetchall()
-conn.close()
+Why this exists: batch_processor.py's FONT_INDEX only needs a font FILE to
+exist somewhere in FONT_FOLDERS to resolve a name -> path. That is NOT the
+same thing as Photoshop being able to render that font. The UXP plugin sets
+fontPostScriptName directly in a batchPlay textStyle descriptor, and
+Photoshop resolves that name against whatever fonts are actually installed
+in Windows — if a .ttf/.otf is just sitting in a project folder and was
+never installed, Photoshop silently substitutes Myriad Pro. This script
+does the actual OS-level install (copy into C:\\Windows\\Fonts + register in
+the registry) for every font file found, so nothing needs a manual/partial
+FONT_MAP anymore.
 
-fonts_used = set()
-for row in rows:
-    try:
-        d = json.loads(row[0])
-        if d.get("PremiumFont"): fonts_used.add(d["PremiumFont"].strip())
-        if d.get("NormalFont"):  fonts_used.add(d["NormalFont"].strip())
-    except: pass
+Usage:
+    python install_fonts.py                     # installs from the default source folder(s) below
+    python install_fonts.py --source "C:\\path"   # installs from a specific folder (recursive)
+"""
+import argparse, ctypes, os, shutil, sys, winreg
 
-print("Fonts used in orders:")
-for f in sorted(fonts_used): print(f"  {f}")
-print()
+HERE = os.path.dirname(os.path.abspath(__file__))
 
-# ── Font file mapping ──────────────────────────────────────────────────────────
-# Maps font name (as stored in DB) to filename in A:\font\
-FONT_MAP = {
-    # Normal fonts
-    "Arial Bold":           [r"A:\font\Fonts\arialbd.ttf"],
-    "Arial":                [r"A:\font\Fonts\arialbd.ttf"],
-    "Helvetica":            [r"A:\font\Fonts\arialbd.ttf"],  # fallback to Arial
-    "Helvetica Neue":       [r"A:\font\Fonts\arialbd.ttf"],  # fallback to Arial
-    "Bebas Neue":           [r"A:\font\Fonts\BebasNeue-Regular.ttf"],
-    "Bebas":                [r"A:\font\Fonts\BebasNeue-Regular.ttf"],
-    "Abel":                 [r"A:\font\Fonts\Abel-Regular.ttf"],
-    "Chewy":                [r"A:\font\Fonts\Chewy-Regular.ttf"],
-    "Fondamento":           [r"A:\font\Fonts\Fondamento-Regular.ttf"],
-    "Lato":                 [r"A:\font\Fonts\Lato-Regular.ttf"],
-    "Permanent Marker":     [r"A:\font\Fonts\PermanentMarker-Regular.ttf"],
-    "Roboto":               [r"A:\font\Fonts\Roboto-Regular.ttf"],
-    "Russo One":            [r"A:\font\Fonts\RussoOne-Regular.ttf"],
-    "Ultra":                [r"A:\font\Fonts\Ultra-Regular.ttf"],
-    # Premium fonts
-    "Bouquet Display":      [r"A:\font\Fonts\Bouqet-Display.otf"],
-    "Bouqet Display":       [r"A:\font\Fonts\Bouqet-Display.otf"],
-    "Camoblock":            [r"A:\font\Fonts\Camoblock.otf"],
-    "Colorful Blocks":      [r"A:\font\Premium Fonts\Colorful Blocks.otf"],
-    "Cozy Winter":          [r"A:\font\Premium Fonts\Cozy Winter.otf"],
-    "Paint Splashes Rainbow":[r"A:\font\Premium Fonts\Paint Splashes Rainbow.otf"],
-    "Refraction Ray":       [r"A:\font\Premium Fonts\Refraction Ray.otf"],
-    "Smart Kids":           [r"A:\font\Premium Fonts\Smart Kids.otf"],
-    "Soccer Army":          [r"A:\font\Premium Fonts\Soccer Army.otf"],
-    "Spider Web":           [r"A:\font\Premium Fonts\Spider Web.otf"],
-    "Wavemermaid":          [r"A:\font\Premium Fonts\Wavemermaid.otf"],
-    "Spidey Font":          [r"A:\font\Premium Fonts\Spider Web.otf"],
-    "Paint Font":           [r"A:\font\Premium Fonts\Paint Splashes Rainbow.otf"],
-}
+# Default source folders — same idea as FONT_FOLDERS in batch_processor.py.
+# Point --source at the consolidated migration staging folder when setting up a new server.
+DEFAULT_SOURCES = [
+    os.path.join(HERE, "Fonts"),
+    os.path.join(HERE, "Fonts", "Premium Fonts"),
+    os.path.join(HERE, "Fonts", "Fonts"),
+]
 
 WINDOWS_FONTS = r"C:\Windows\Fonts"
+FONTS_REG_KEY = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
 
-# ── Install all fonts from A:\font ─────────────────────────────────────────────
-installed = 0
-skipped   = 0
-failed    = 0
+# Windows font-name suffix the registry expects, per file type
+REG_SUFFIX = {".ttf": "(TrueType)", ".otf": "(OpenType)"}
 
-print("Installing all fonts from A:\\font...")
-for folder in [r"A:\font\Fonts", r"A:\font\Premium Fonts"]:
-    if not os.path.exists(folder):
-        print(f"  SKIP (not found): {folder}")
-        continue
-    for fname in os.listdir(folder):
-        if not fname.lower().endswith((".ttf", ".otf")):
-            continue
-        src  = os.path.join(folder, fname)
-        dest = os.path.join(WINDOWS_FONTS, fname)
-        if os.path.exists(dest):
-            skipped += 1
-            continue
-        try:
-            shutil.copy2(src, dest)
-            try:
-                import winreg
-                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts",
-                    0, winreg.KEY_SET_VALUE)
-                winreg.SetValueEx(key, fname, 0, winreg.REG_SZ, fname)
-                winreg.CloseKey(key)
-            except: pass
-            print(f"  Installed: {fname}")
-            installed += 1
-        except Exception as e:
-            print(f"  Failed: {fname} — {e}")
-            failed += 1
 
-# Also install Helvetica from A:\font if present
-helvetica_src = r"A:\font\Fonts\Helvetica.ttf"
-if os.path.exists(helvetica_src):
-    dest = os.path.join(WINDOWS_FONTS, "Helvetica.ttf")
-    if not os.path.exists(dest):
-        shutil.copy2(helvetica_src, dest)
-        print("  Installed: Helvetica.ttf")
-        installed += 1
+def broadcast_font_change():
+    """Tell running apps (Explorer, and often Photoshop) that the font list changed,
+    without requiring a reboot. Restarting Photoshop is still the safest fallback."""
+    HWND_BROADCAST = 0xFFFF
+    WM_FONTCHANGE   = 0x001D
+    ctypes.windll.user32.SendMessageW(HWND_BROADCAST, WM_FONTCHANGE, 0, 0)
 
-print(f"\nInstalled: {installed}  Already present: {skipped}  Failed: {failed}")
 
-# ── Verify fonts used in orders are covered ────────────────────────────────────
-print("\nFont coverage check:")
-for font in sorted(fonts_used):
-    if font in FONT_MAP:
-        src = FONT_MAP[font][0]
-        fname_only = os.path.basename(src)
-        dest = os.path.join(WINDOWS_FONTS, fname_only)
-        status = "OK" if os.path.exists(dest) else "MISSING"
-        print(f"  [{status}] {font} -> {fname_only}")
-    else:
-        print(f"  [UNMAPPED] {font} -> no mapping defined")
+def install_font(src_path):
+    """Copy one font file into C:\\Windows\\Fonts and register it. Returns
+    'installed', 'already_present', or ('failed', reason)."""
+    fname = os.path.basename(src_path)
+    ext   = os.path.splitext(fname)[1].lower()
+    if ext not in (".ttf", ".otf"):
+        return "skipped_not_a_font"
+
+    dest = os.path.join(WINDOWS_FONTS, fname)
+    if os.path.exists(dest):
+        return "already_present"
+
+    try:
+        shutil.copy2(src_path, dest)
+    except Exception as e:
+        return ("failed", f"copy: {e}")
+
+    try:
+        display_name = f"{os.path.splitext(fname)[0]} {REG_SUFFIX.get(ext, '')}".strip()
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, FONTS_REG_KEY, 0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(key, display_name, 0, winreg.REG_SZ, fname)
+        winreg.CloseKey(key)
+    except Exception as e:
+        return ("failed", f"copied but registry write failed (needs admin): {e}")
+
+    return "installed"
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Install every font file as a real Windows/Photoshop font")
+    parser.add_argument("--source", action="append", help="Folder to scan (recursive). Can repeat. Defaults to the project's own Fonts folders.")
+    args = parser.parse_args()
+
+    sources = args.source or DEFAULT_SOURCES
+    sources = [s for s in sources if os.path.isdir(s)]
+    if not sources:
+        print("No valid source folders found. Pass --source \"<folder>\" pointing at your font collection.")
+        sys.exit(1)
+
+    print(f"Scanning {len(sources)} source folder(s):")
+    for s in sources:
+        print(f"  - {s}")
+    print()
+
+    installed, already, failed, skipped = 0, 0, 0, 0
+    failures = []
+
+    for source in sources:
+        for root, _dirs, files in os.walk(source):
+            for fname in files:
+                result = install_font(os.path.join(root, fname))
+                if result == "installed":
+                    installed += 1
+                    print(f"  Installed: {fname}")
+                elif result == "already_present":
+                    already += 1
+                elif result == "skipped_not_a_font":
+                    skipped += 1
+                else:
+                    _, reason = result
+                    failed += 1
+                    failures.append((fname, reason))
+                    print(f"  FAILED: {fname} — {reason}")
+
+    print()
+    print(f"Installed: {installed}  |  Already present: {already}  |  Failed: {failed}  |  Skipped (non-font files): {skipped}")
+
+    if installed > 0:
+        broadcast_font_change()
+        print("Broadcast WM_FONTCHANGE. If Photoshop is already open, restart it to guarantee it picks up the new fonts.")
+
+    if failed > 0:
+        print("\nFailures usually mean this script needs to run as Administrator (registry write to HKEY_LOCAL_MACHINE requires it).")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

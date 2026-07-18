@@ -1,7 +1,7 @@
 # Varsany Print Automation — Project Knowledge Base
 
 > Business: Varsany / Fullymerched — Amazon custom print-on-demand
-> Last updated: 2026-03-20
+> Last updated: 2026-07-16 (verified against live code — see section 21 for what changed)
 
 ---
 
@@ -17,8 +17,12 @@ design team creates print file → printing department prints and ships
 - T-shirts (adult, kids, polo)
 - Baby vests, slippers, swimsuits, legsuits
 - Gymnastics towel ponchos, tote bags, track pants, leggings
+- Bags (tote, backpack, makeup, shoe, string, knitting), golf towels/cases,
+  memorial plaques, cushions, beanies, bucket hats, socks, seatbelt covers
 
-**Print type:** DTF (Direct to Film) — all products personalised per order
+**Print type:** DTF (Direct to Film) — all products personalised per order.
+Some orders are rhinestone/embroidery instead of DTF — these are detected
+and routed to manual processing (see section 10).
 
 ---
 
@@ -36,7 +40,9 @@ design team creates print file → printing department prints and ships
 10. Printing department opens PSD, flattens, and prints
 
 **Time per order:** 10-15 minutes manually
-**Target with automation:** 30-60 seconds automatically
+**Target with automation:** 30-60 seconds automatically (actual current rate:
+~5-7 minutes/order on this VM — see section 19 for why, and section 21 for
+the fixes applied so far)
 
 ---
 
@@ -67,7 +73,8 @@ TrustServerCertificate=yes;
 | SKU | nvarchar | Encodes colour+size e.g. MenTee_BlkM |
 | Quantity | int | Number of copies ordered |
 | ItemType | nvarchar | Product type (DTF etc.) |
-| IsShipped | bit | Whether shipped |
+| IsShipped | bit | Whether shipped — **the automation queue now excludes any order where this is 1, regardless of processing status** (see section 21) |
+| ConvertedShipByDate | datetime | Ship-by deadline — **the Output folder is dated by this, not by processing date** (see section 6) |
 | Notes | nvarchar | Used for automation error messages |
 
 ### tblCustomOrderDetails — Key Columns
@@ -80,21 +87,21 @@ TrustServerCertificate=yes;
 | IsBackLocation | bit | Back zone active |
 | IsPocketLocation | bit | Pocket zone active |
 | IsSleeveLocation | bit | Sleeve zone active |
-| FrontImage | nvarchar(500) | URL to customer uploaded image |
+| FrontImage | nvarchar(500) | URL/filename of customer uploaded image |
+| FrontImageJSON | nvarchar | `{"Image1":"...","Image2":"..."}` — multi-image zones (e.g. pocket left+right) use this, not FrontImage |
 | FrontText | nvarchar(1000) | Customer text (newline separated) |
-| FrontFonts | nvarchar(200) | Font name |
-| FrontColours | nvarchar(200) | Hex colour e.g. #ffffff |
-| FrontPreviewImage | nvarchar(500) | Amazon preview image URL |
-| FrontPremiumFont | nvarchar | Yes/No premium font flag |
-| IsFrontPSDDownload | bit | Whether PSD generated |
-| (same columns for Back, Pocket, Sleeve) | | |
-| IsOrderProcess | bit | Whether order processed |
-| IsDesignComplete | bit | Whether design complete |
-| ProcessBy | nvarchar | Set to 'AutomationScript' by automation |
-| AdditionalPSD | nvarchar(500) | Output file path |
-| CustomizationJSON | nvarchar | Full customization data |
+| FrontTextJSON | nvarchar | `{"Text1":"...","Text2":"..."}` — used for semi-custom jersey name/number |
+| FrontFonts | nvarchar(200) | JSON `{"NormalFont":"...","PremiumFont":"..."}` (pocket uses `{"Left Font":..,"Right Font":..}` instead) |
+| FrontColours | nvarchar(200) | JSON `{"Colour1":"#hex"}` (pocket uses `{"Left Colour":..,"Right Colour":..}`) |
+| FrontPreviewImage | nvarchar(500) | Amazon preview image URL — **confirmed populated** on real orders checked this session (resolves the "Questions Still Open" item from the old doc) |
+| FrontTopazImage | nvarchar | JSON `{"Image1":"...-Topaz.jpg"}` — Topaz-upscaled image, produced by an **external** process, not by this script (see section 10) |
+| IsTopazImageProcess | bit | Whether Topaz upscaling has completed for this row |
+| CustomizationCategory | nvarchar | `Fullycustomized` (standard pipeline) or `Semicustomized` (jersey template pipeline) |
+| Topaz_Processed | bit | **This is the actual "is this order done" flag the daemon checks** — not IsDesignComplete |
+| ProcessBy | nvarchar | Name of whoever last touched the order on the order page (human designer name, e.g. "Ajay") **or** `AutomationScript`. A human name here does NOT mean the automation output exists — it just means someone opened the order page. |
+| (same Text/Image/Fonts/Colours columns for Back, Pocket, Sleeve) | | |
 
-### New Columns to Add (run on both local and live DB)
+### New Columns — still NOT added on this local DB (verified this session)
 ```sql
 USE dbAmazonCustomOrders;
 ALTER TABLE tblCustomOrderDetails ADD
@@ -106,68 +113,77 @@ ALTER TABLE tblCustomOrderDetails ADD
     QCNotes          nvarchar(500) NULL,
     IsComplexOrder   bit           NULL DEFAULT 0,
     OutputFilePath   nvarchar(500) NULL;
-
--- Local DB only (live DB uses short URLs):
-ALTER TABLE tblCustomOrderDetails ALTER COLUMN FrontImage  nvarchar(500);
-ALTER TABLE tblCustomOrderDetails ALTER COLUMN BackImage   nvarchar(500);
-ALTER TABLE tblCustomOrderDetails ALTER COLUMN PocketImage nvarchar(500);
-ALTER TABLE tblCustomOrderDetails ALTER COLUMN SleeveImage nvarchar(500);
-ALTER TABLE tblCustomOrderDetails ALTER COLUMN FrontText   nvarchar(1000);
-ALTER TABLE tblCustomOrderDetails ALTER COLUMN BackText    nvarchar(1000);
-ALTER TABLE tblCustomOrderDetails ALTER COLUMN SleeveText  nvarchar(1000);
-ALTER TABLE tblCustomOrderDetails ALTER COLUMN PocketText  nvarchar(1000);
 ```
+None of these 8 columns currently exist on the local DB, and **none of the code that would use them (QC scoring, complexity flags) is actually implemented yet either** — see sections 11 and 14. This is still a real gap, not just a missing column.
 
 ---
 
 ## 4. Print Specifications
 
-**Resolution:** 320 pixels/centimetre = 812.8 DPI
+**Resolution: 320 DPI (dots per inch) = ~125.98 pixels/centimetre.**
+The formula is **cm × 125.98 = px** (i.e. `px = cm * (320 / 2.54)`), confirmed
+directly from the running code (`PX_PER_CM = DPI / 2.54`, `DPI = 320`) and
+matches every real template file's actual pixel dimensions on disk.
+
+> ⚠️ Earlier versions of this doc said "320 pixels/centimetre = 812.8 DPI" and
+> listed canvas sizes computed as `cm × 320`. That was wrong — it silently
+> describes a canvas **2.54× larger** than what the code actually produces.
+> The cm figures below are correct (they match designer/print intent); only
+> the px column and the conversion formula were fixed.
+
 **Colour mode:** CMYK
 **ICC Profile:** U.S. Web Coated (SWOP) v2
 **Background:** Always transparent
 **Format:** PSD with layers (printing team flattens before printing)
 **Large files:** Auto-save as PSB if file exceeds 2GB
 
-### Canvas Sizes (formula: cm × 320 = pixels)
+### Canvas Sizes — verified directly from `PRODUCT_CANVAS` in `batch_processor.py`
 | Product key | Zone | Width cm | Height cm | Width px | Height px |
 |---|---|---|---|---|---|
-| adulttshirt | front | 30 | 30 | 9600 | 9600 |
-| adulttshirt | back | 30 | 30 | 9600 | 9600 |
-| adulttshirt | pocket | 9 | 7 | 2880 | 2240 |
-| kidstshirt | front | 23 | 30 | 7360 | 9600 |
-| kidstshirt | back | 23 | 30 | 7360 | 9600 |
-| kidstshirt | pocket | 9 | 7 | 2880 | 2240 |
-| adulthoodie | front | 25 | 25 | 8000 | 8000 |
-| adulthoodie | back | 25 | 25 | 8000 | 8000 |
-| adulthoodie | pocket | 9 | 7 | 2880 | 2240 |
-| adulthoodie | sleeve | 9 | 7 | 2880 | 2240 |
-| kidshoodie | front | 23 | 20 | 7360 | 6400 |
-| kidshoodie | back | 23 | 20 | 7360 | 6400 |
-| kidshoodie | pocket | 9 | 7 | 2880 | 2240 |
-| totebag | front | 28 | 28 | 8960 | 8960 |
-| totebag | back | 28 | 28 | 8960 | 8960 |
-| backpack | front | 18 | 12 | 5760 | 3840 |
-| makeupbag | front | 23 | 14 | 7360 | 4480 |
-| shoebag | front | 23 | 14 | 7360 | 4480 |
-| shoebag2 | front | 14 | 14 | 4480 | 4480 |
-| stringbag | front | 22 | 24 | 7040 | 7680 |
-| knittingbag | front | 25 | 21 | 8000 | 6720 |
-| buckethat | front | 11 | 4 | 3520 | 1280 |
-| beanie | front | 9.5 | 4.5 | 3040 | 1440 |
-| socks | front | 6 | 12 | 1920 | 3840 |
-| seatbelt | front | 18 | 4 | 5760 | 1280 |
-| babyvest | front | 15 | 17 | 4800 | 5440 |
-| sleepsuit | front | 13 | 18 | 4160 | 5760 |
-| hodieblanket | front | 17 | 5 | 5440 | 1600 |
-| cushion | front | 30 | 30 | 9600 | 9600 |
-| memorialplaque | front | 13 | 8 | 4160 | 2560 |
-| golftowel | front | 17 | 17 | 5440 | 5440 |
-| golfcase | front | 15 | 6 | 4800 | 1920 |
-| slipper | front | 6 | 6 | 1920 | 1920 |
-| default | front | 30 | 30 | 9600 | 9600 |
-| default | back | 30 | 30 | 9600 | 9600 |
-| default | pocket | 9 | 7 | 2880 | 2240 |
+| adulttshirt | front | 30 | 30 | 3780 | 3780 |
+| adulttshirt | back | 30 | 30 | 3780 | 3780 |
+| adulttshirt | pocket | 9 | 9 | 1134 | 1134 |
+| kidstshirt | front | 23 | 30 | 2898 | 3780 |
+| kidstshirt | back | 23 | 30 | 2898 | 3780 |
+| kidstshirt | pocket | 9 | 9 | 1134 | 1134 |
+| adulthoodie | front | 25 | 25 | 3150 | 3150 |
+| adulthoodie | back | 25 | 25 | 3150 | 3150 |
+| adulthoodie | pocket | 9 | 9 | 1134 | 1134 |
+| adulthoodie | sleeve | 9 | 7 | 1134 | 882 |
+| kidshoodie | front | 23 | 20 | 2898 | 2520 |
+| kidshoodie | back | 23 | 20 | 2898 | 2520 |
+| kidshoodie | pocket | 9 | 9 | 1134 | 1134 |
+| totebag | front | 28 | 28 | 3528 | 3528 |
+| totebag | back | 28 | 28 | 3528 | 3528 |
+| backpack | front | 18 | 12 | 2268 | 1512 |
+| makeupbag | front | 23 | 14 | 2898 | 1764 |
+| shoebag | front | 23 | 14 | 2898 | 1764 |
+| shoebag2 | front | 14 | 14 | 1764 | 1764 |
+| stringbag | front | 22 | 24 | 2772 | 3024 |
+| knittingbag | front | 25 | 21 | 3150 | 2646 |
+| buckethat | front | 11 | 4 | 1386 | 504 |
+| beanie | front | 9.5 | 4.5 | 1197 | 567 |
+| socks | front | 6 | 6 | 756 | 756 |
+| footballshorts | front | 6 | 9 | 756 | 1134 |
+| seatbelt | front | 18 | 4 | 2268 | 504 |
+| babyvest | front | 15 | 17 | 1890 | 2142 |
+| sleepsuit | front | 13 | 18 | 1638 | 2268 |
+| hodieblanket | front | 17 | 5 | 2142 | 630 |
+| cushion | front | 30 | 30 | 3780 | 3780 |
+| memorialplaque | front | 13 | 8 | 1638 | 1008 |
+| golftowel | front | 17 | 17 | 2142 | 2142 |
+| golfcase | front | 15 | 6 | 1890 | 756 |
+| slipper | front | 6 | 6 | 756 | 756 |
+| default | front | 30 | 30 | 3780 | 3780 |
+| default | back | 30 | 30 | 3780 | 3780 |
+| default | pocket | 9 | 9 | 1134 | 1134 |
+
+Note vs. old doc: pocket zones are now **9×9cm square** on every product (was
+documented as 9×7cm), and socks is **6×6cm** (was documented as 6×12cm).
+These are the values the live code actually uses today.
+
+Any SKU whose product can't be detected falls back to `default` — it is
+**never** a hard failure (see section 8).
 
 ---
 
@@ -182,36 +198,58 @@ ALTER TABLE tblCustomOrderDetails ALTER COLUMN PocketText  nvarchar(1000);
 | Front Pocket + Back | pocket, back | +INR 491.34 |
 | Front + Sleeve | front, sleeve | +INR 368.51 |
 | Front + Back + Sleeve | front, back, sleeve | +INR 614.18 |
+| Front Pocket Left + Right (+ Back) | pocket_left, pocket_right, back | — |
+
+The last row is a real, common combo (two separate images side by side in
+the pocket zone). It's built as two independent zone entries
+(`pocket_left`/`pocket_right`), not one — see section 7.
 
 ---
 
-## 6. File Storage & Synology Drive
+## 6. File Storage & Output Folders
 
-**Drive letter:** Z:
-**Drive name:** Vector Designs
-**Path:** Z:\Drive DTF Orders\1. Amazon DTF\
-**Sync:** India Synology → UK Synology via SpeedFusion/Peplink B One router
+**Production sync target (as originally documented — not verified this
+session):** Z:\Drive DTF Orders\1. Amazon DTF\, synced India ↔ UK Synology
+via SpeedFusion/Peplink.
 
-### Recommended Output Structure
+**Local/actual base path used by the script:** `C:\gimpTest\Output\`
+(`VARSANY_OUTPUT` env var, defaults to `{VARSANY_BASE}\Output`).
+
+### The date folder is the order's SHIP-BY date, not the processing date
+```python
+_ship = first_row.get("ConvertedShipByDate")
+_date_str = str(_ship)[:10] if _ship else datetime.now().strftime("%Y-%m-%d")
+out_dir = os.path.join(OUTPUT_FOLDER, _date_str)
 ```
-Z:\Drive DTF Orders\1. Amazon DTF\Automation Output\
-└── 2026-03-20\
-    ├── 205-6487629-5805162_front.psd
-    ├── 205-6487629-5805162_sleeve.psd
-    └── ...
+This surprised us mid-session: an order processed today can land in
+*yesterday's* (or several days ago's) output folder if that's when it was
+supposed to ship. It's correct/intentional, not a bug — but it means
+"today's output folder" is not the same thing as "orders processed today."
+
+### Actual folder structure under each date
 ```
-Script auto-creates dated subfolder per day.
+Output\<ship-by-date>\
+├── Automated\                    Multi-zone orders (front+back, etc.)
+├── DTF Front\                    Single-zone orders
+│   ├── black\                    SKU colour code contains "blk"
+│   └── white\                    SKU colour code contains "wht"
+├── DTF Kids Hoodie\               Kids hoodie SKUs (kidshoo/gymhoodie/kidshood)
+│   ├── black\
+│   └── white\
+└── semicustomized\               Jersey/semi-custom orders
+```
+Only "black"/"white" get a colour sub-folder; every other colour saves
+directly into the category folder. Filename is `{OrderID}.psd`, or
+`{OrderID}_{N}items.psd` for multi-item orders.
 
 ---
 
 ## 7. Design Rules (from designer)
 
 ### Background Removal Rule
-Remove background when background colour matches garment colour:
-- White background + white t-shirt → REMOVE
-- Black background + black hoodie → REMOVE
-- White background + black hoodie → KEEP (white rectangle is intentional)
-- Use IsFrontBgRemove flag in database (set by designer on order page)
+Remove background when background colour matches garment colour — see the
+actual hybrid decision logic in section 13 (this section previously said
+"rembg" was the mechanism; it's more nuanced than that).
 
 ### Font Sizing
 - Auto-fit: largest font where all text lines fit within canvas width and height
@@ -223,14 +261,25 @@ Remove background when background colour matches garment colour:
 - Parse: `text.split("\n")`
 
 ### Zone Labels
-Small black text in top-left corner of every PSD:
+Small black text above each zone on every PSD:
 - "front", "back", "sleeve", "pocket", "pocket left", "pocket right"
 - Front zone sometimes uses SKU code e.g. "Ylw34" (Yellow size 3-4)
+- Format: `{Zone} - {Colour} {Size}` e.g. "Pocket Left - Royal Blue XL"
 
 ### Quantity > 1
-Stack copies vertically on one canvas. Quantity 3 = canvas height × 3.
+Stack copies vertically on one canvas, with a 1cm gap between copies (for
+cutting). Socks always print 2 copies per ordered pair, regardless of the
+DB quantity value (one pair = two socks).
 
-### Photo Collage (multiple images)
+### Pocket "Left + Right" combo (fixed this session — see section 21)
+When a pocket zone has 2 images (`PocketImageJSON` has `Image1` and
+`Image2`), it is built as **two separate zones** (`pocket_left`,
+`pocket_right`), each with its own image, font, and colour — pulled from
+the `Left`/`Right`-prefixed keys in `PocketFonts`/`PocketColours`. A single
+dict key can't hold two images, which is why this needs two zone entries
+instead of one.
+
+### Photo Collage (multiple images, front zone)
 - 1 image → full canvas, 2 → side by side, 4 → 2×2, 6 → 2×3 grid
 - Text (if any) goes below collage
 
@@ -240,89 +289,122 @@ Detect: scan edges, if 85%+ pixels are dark → auto-crop borders.
 
 ### Amazon Position Data
 Amazon does NOT share X/Y coordinates of where customer dragged elements.
-Only the preview image (FrontPreviewImage) shows the correct position.
-Use preview image as reference for crop/position decisions.
+Only the preview image (FrontPreviewImage) shows the correct position —
+**confirmed populated** on real orders (resolves an old open question).
 
 ---
 
-## 8. PSD Templates
+## 8. PSD Templates — MAJOR CHANGE this session
 
-**Total:** 28 templates
-**Organisation:** One PSD per product type + zone
-**Naming:** {product}_{zone}.psd e.g. hoodie_front.psd, tshirt_sleeve.psd
+**Standard ("Fullycustomized") orders no longer use template files at all.**
+The UXP plugin creates a blank CMYK/transparent canvas from scratch at the
+exact product/zone size (`app.documents.add(...)`), sized from the same
+`PRODUCT_CANVAS` dimensions in section 4. This was a deliberate fix (see
+section 21) — it eliminates the entire class of "No template found for
+X/default" failures that used to happen for any unmapped SKU or product.
 
-### Template Map
-```python
-TEMPLATE_MAP = {
-    ("hoodie",    "front"):  "hoodie_front.psd",
-    ("hoodie",    "back"):   "hoodie_back.psd",
-    ("hoodie",    "sleeve"): "hoodie_sleeve.psd",
-    ("hoodie",    "pocket"): "hoodie_pocket.psd",
-    ("tshirt",    "front"):  "tshirt_front.psd",
-    ("tshirt",    "back"):   "tshirt_back.psd",
-    ("tshirt",    "sleeve"): "tshirt_sleeve.psd",
-    ("tshirt",    "pocket"): "tshirt_pocket.psd",
-    ("kidstshirt","front"):  "kidstshirt_front.psd",
-    ("kidstshirt","back"):   "kidstshirt_back.psd",
-    ("babyvest",  "front"):  "babyvest_front.psd",
-    ("totebag",   "front"):  "totebag_front.psd",
-    ("totebag",   "back"):   "totebag_back.psd",
-    ("slipper",   "front"):  "slipper_front.psd",
-    ("swimsuit",  "front"):  "swimsuit_front.psd",
-    ("leggings",  "front"):  "leggings_front.psd",
-    ("polo",      "front"):  "polo_front.psd",
-    ("polo",      "back"):   "polo_back.psd",
-    ("polo",      "pocket"): "polo_pocket.psd",
-    ("poncho",    "front"):  "poncho_front.psd",
-}
-```
+**Only semi-custom (jersey) orders still open a real template file.** These
+templates contain pre-built named layers (crest artwork, `Player`/`08` text
+placeholders) that can't be generated from a blank canvas.
+
+### Semi-custom slot config (`SEMI_CUSTOM_SLOT_CONFIG` in batch_processor.py)
+| Template file | Slots | Slot height | Text layers |
+|---|---|---|---|
+| england Football Adult.psd | 7 | 3780px | `Player`, `08` (+ Photoshop auto-copy names for slots 2-7) |
+| england Football Kids.psd | 7 | 3780px | same |
+| scotland Football Adult.psd | 7 | 3780px | same |
+| scotland Football Kids.psd | 7 | 3780px | same |
+
+⚠️ **Only `england Football Adult.psd` currently exists in `C:\gimpTest\template\`.**
+The other 3 configured templates are missing on this machine — any
+Scotland or Kids jersey order will fail until those files are restored.
+
+The `template\` folder also still contains ~25 other `{product}.psd` /
+`{product}_combined.psd` files (adulttshirt.psd, babyvest.psd, etc.) —
+**these are now orphaned/unused** by the standard pipeline since the
+canvas-creation change above. They can be archived or deleted; nothing
+reads them anymore for non-jersey orders.
 
 ---
 
-## 9. Premium Fonts
+## 9. Fonts
 
-- Database field: FrontPremiumFont / BackPremiumFont (Yes/No)
-- When Yes: colour ignored, font has built-in texture (camo, glitter etc.)
-- Font .ttf file must be in C:\gimpTest\Fonts\ matching exact name in DB
-- If font file found → auto-process
-- If font file missing → flag to designer with email/Slack alert
+- Database fonts field is JSON: `{"NormalFont":"...","PremiumFont":"..."}` for
+  front/back, `{"Left Font":..,"Right Font":..,"PremiumFont":..}` for pocket.
+- When `PremiumFont` is set and resolves to a known font: colour is ignored,
+  font has built-in texture (camo, glitter, SVG colour fonts etc.)
+- **Fonts are scanned from 4 locations** (`FONT_FOLDERS` in batch_processor.py),
+  not just one folder:
+  1. `{VARSANY_BASE}\Fonts` (project-local, travels with the repo folder)
+  2. `VARSANY_FONTS_EXTRA` — comma-separated extra folders (`.env`-configured;
+     on this machine: `C:\gimpTest\Fonts\Premium Fonts`, `C:\gimpTest\Fonts\Fonts`)
+  3. `C:\Windows\Fonts` (OS-wide, hardcoded path)
+  4. `%LOCALAPPDATA%\Microsoft\Windows\Fonts` (per-user, hardcoded path) —
+     **this one is the migration risk**: it's outside the project folder,
+     outside git, and tied to this specific Windows user profile. Many key
+     premium/SVG-colour fonts (Camoblock, Wavemermaid, Soccer Army, etc.)
+     live only here. A consolidated copy of all 4 sources (688 unique fonts,
+     verified complete) exists at `C:\Users\VARHeist\Desktop\fonts` for
+     migration to a new server.
+- **Not every font name in the DB is a real font.** `FONT_ALIASES` deliberately
+  maps some normalized names to `None` — these are category/decoration labels
+  customers pick from a dropdown (`Rhinestone`, `Embroidery Font`, `DTF Text`,
+  `Varsany`, etc.), not typefaces. They're intentionally never resolved to a
+  file; they're used instead to detect and skip non-DTF orders (see section 10).
+- If a real font name has no file and no alias → font lookup silently fails.
+  14 such gaps were found this session (some genuine missing fonts like
+  `Abril Fatface`/`Cookie`/`Great Vibes`, some likely mislabeled non-fonts
+  like `Football Shorts`/`T-Shirt Font` that just need a `None` alias added).
 
 ---
 
 ## 10. Automation Pipeline
 
-**Script:** varsany_automation.py
-**Language:** Python 3.10+
-**Poll interval:** Every 30 seconds
+**Script:** `batch_processor.py`
+**Language:** Python 3.14
+**Runs as:** a Windows Service (`VarsanyDaemon`, via NSSM at `C:\nssm\nssm.exe`)
+— **not** just a manually-run script. This means:
+- It survives closing any terminal/RDP session, and restarts automatically
+  if it crashes (`nssm set VarsanyDaemon AppParameters ...` to change its
+  launch args — editing `start_daemon.bat` alone does **not** change what
+  the service actually runs, since the service has its own stored config).
+- Queue "resuming" after a restart is automatic and safe — the queue is a
+  live DB query (`Topaz_Processed = 0/NULL AND IsShipped = 0/NULL`), not an
+  in-memory position, so nothing gets skipped or duplicated on restart.
+**Poll interval:** every 30 seconds
 
-### Dependencies
-```bash
-pip install pyodbc psd-tools Pillow python-dotenv rembg flask
-# Also install: GIMP (for layered PSD), Real-ESRGAN (for upscaling)
-winget install GIMP.GIMP
-```
+### Processing engine: Photoshop UXP plugin, not GIMP
+Earlier versions of this doc described a GIMP-headless pipeline. **That was
+never actually built** — there is zero GIMP code anywhere in this repo. The
+real pipeline is: Python (`batch_processor.py`) → `ps_bridge.py` writes a
+job JSON to `jobs\` → the UXP plugin (`uxp-plugin\index.html`, running
+inside a real, open Photoshop) picks it up, builds the PSD via
+`batchPlay`/DOM API calls, and writes a done/error marker back. See
+section 12 for the actual mechanism.
 
-### Processing Steps Per Order
-1. Read order from tblCustomOrderDetails (IsDesignComplete=0)
-2. Check premium font → flag if .ttf missing
-3. Check complexity → flag if screenshot borders, low res etc.
-4. For each active zone:
-   a. Download image from URL
-   b. Remove screenshot borders (detect black letterbox)
-   c. Remove background if Is[Zone]BgRemove=1
-   d. Upscale 4x via Real-ESRGAN
-   e. Open correct PSD template from TEMPLATE_MAP
-   f. Place image on canvas
-   g. Render text with auto-sized font and correct colour
-   h. Add zone label (top-left black text)
-   i. Assemble layered PSD via GIMP headless
-   j. Save as [OrderID]_[zone].psd to Synology
-5. Update DB: IsDesignComplete=1, ProcessBy='AutomationScript'
-6. Send Slack/email alert if any zone flagged
+### Processing Steps Per Order (as actually implemented)
+1. `fetch_orders()` reads pending rows: `Topaz_Processed = 0/NULL AND IsShipped = 0/NULL`, ordered by `DateAdd ASC`
+2. Detect embroidery/rhinestone SKUs or font labels → skip (never marked processed — see section 19 for why this matters for queue counts)
+3. Detect semi-custom (jersey) vs standard via `CustomizationCategory` + a matching template
+4. For each active zone: resolve image (Topaz-upscaled version preferred — **Topaz upscaling itself happens in a separate, external process/service, not in this script**; this script just waits for `IsTopazImageProcess=1` and reads the resulting URL), resolve font/colour, apply background removal if needed
+5. Submit a job to the UXP plugin (dynamic blank canvas for standard orders, real template for semi-custom)
+6. UXP builds layers, saves the PSD, reports done/error
+7. On success: mark `Topaz_Processed = 1` on every detail row for that order
+8. On failure: log and leave the order pending for the next poll cycle (no DB flag change)
+
+**Not implemented (still just documented intent, no code exists for these):**
+- Complexity flagging (section 11)
+- QC thumbnail/confidence scoring (section 14)
+- Slack/email alerts of any kind
 
 ---
 
-## 11. Complexity Flags (auto-flagged to designer)
+## 11. Complexity Flags — ⚠️ NOT IMPLEMENTED
+
+This table describes a **planned** system. No code anywhere in
+`batch_processor.py` currently writes any of these flag values or an
+`IsComplexOrder`/`QCStatus` column (those columns don't exist yet either —
+section 3). Treat this as a design doc for future work, not current behavior.
 
 | Code | Reason |
 |---|---|
@@ -331,52 +413,71 @@ winget install GIMP.GIMP
 | bg_removal_uncertain | Confidence < 80% |
 | too_many_photos | More than 6 photos in collage |
 | text_overflow | Text too long for canvas |
-| unknown_product | Product not in PRODUCT_CANVAS |
+| unknown_product | Product not in PRODUCT_CANVAS (in practice: falls back to `default`, doesn't fail — see section 8) |
 | processing_error | Any script error |
 | premium_font | Font .ttf file not installed |
 
 ---
 
-## 12. Layered PSD Generation
+## 12. Layered PSD Generation (actual mechanism)
 
-**Problem:** Pure Python libraries (psd-tools, ImageMagick, Pillow)
-cannot create proper multi-layer PSDs.
+**Engine:** Adobe Photoshop, driven via the **UXP plugin API**
+(`uxp-plugin/index.html`), not GIMP.
 
-**Solution: GIMP in headless mode**
-- Free, open source, runs on Windows and Linux server
-- No GUI opens — completely background process
-- Python generates Script-Fu commands, calls GIMP silently
-- Output: proper PSD with named editable layers
+- Python (`ps_bridge.py`) writes a job JSON to `C:\gimpTest\jobs\{OrderID}.json`
+  containing zone data (image paths, text, font, colour, canvas size) and
+  polls `done\`/`error\` for a matching marker file.
+- The UXP plugin polls `jobs\` every few seconds, and processes each job
+  inside `core.executeAsModal(...)`, using `action.batchPlay([...])`
+  descriptors for every layer operation (make layer, place image, set text,
+  align, rasterize, resize canvas, save).
+- **Standard orders:** canvas is created fresh via `app.documents.add({width, height, resolution:320, mode:CMYK, fill:TRANSPARENT, profile:"U.S. Web Coated (SWOP) v2"})`. No template file opened.
+- **Semi-custom orders:** the real template `.psd` is opened, and named text
+  layers (`Player`, `08`, and their Photoshop auto-copy names for extra
+  slots) are edited in place via `batchPlay`'s `set textLayer` descriptor.
 
-```bash
-# Install
-winget install GIMP.GIMP        # Windows
-apt install gimp                # Linux server
+**Layer naming actually produced** (verified by opening real output files
+with `psd-tools` this session):
+- `Label_{Zone} - {Colour} {Size}` — the black zone-identifier text
+- `Preview_{zone}_{index}` — hidden Amazon preview image, kept for reference
+- `{raw image filename}` (e.g. `65236222312682-1-pocket-Topaz`) — the customer image, placed and rasterized
+- `Text_{zone}_{timestamp}` — rendered customer text
+- Semi-custom: `Player`/`08` and their `... copy N` variants (text), plus
+  supporting graphic/Smart Object layers per slot (not name-distinguished
+  per slot — same name can repeat across slots)
 
-# Python runs GIMP headlessly:
-gimp --no-interface --batch "(script-fu-command)" --batch "(gimp-quit 0)"
-```
+**Known performance issue (not yet fixed, root-caused this session):** this
+machine has no real GPU (`Microsoft Hyper-V Video` / `Microsoft Remote
+Display Adapter` only), so large-canvas compositing is fully CPU-bound. The
+UXP code also currently uses many single-descriptor `batchPlay` calls,
+`synchronousExecution:true` (Adobe's own docs say to avoid this), and no
+`suspendHistory`/`resumeHistory` wrapping — meaning Photoshop likely
+snapshots the whole canvas for undo after nearly every micro-operation.
+This is believed to be the biggest lever for speeding up processing; see the
+session notes for the specific code changes identified but not yet applied.
 
-**Layer structure in output PSD:**
-- CustomerImage (pixel layer — image/graphic)
-- CustomerText  (pixel layer — rendered text)
-- ZoneLabel     (pixel layer — black zone identifier)
-
-**Fallback:** If GIMP unavailable → save separate PNG per layer
+**No PNG-per-layer fallback exists** — if UXP/Photoshop is unavailable, the
+order simply fails and stays in the queue; there's no degraded-mode output.
 
 ---
 
-## 13. Background Removal
+## 13. Background Removal (actual hybrid logic — not just rembg)
 
-**Library:** rembg (model: u2netp — 3x faster than default)
-**Trigger:** Designer sets IsFrontBgRemove=1 on order page
+**Decision logic (in order, first match wins):**
+1. Manual flag / `--force-bg-remove` CLI flag — highest priority
+2. Auto-detection: does the image's background colour match the garment's
+   colour (from a SKU→RGB colour map)?
+3. If removal is triggered:
+   - **Dark garments (black, navy, etc.) → always colour-key removal.**
+     rembg (AI background removal) is deliberately **not** used here — it
+     destroys dark graphic designs. Colour-key is precise for flat/graphic
+     images.
+   - **Light garments → rembg first**, with a validation check: if rembg's
+     output leaves fewer than 15% of pixels visible (a sign it mis-detected
+     a flat graphic as "background"), it automatically falls back to
+     colour-key removal instead.
 
-**Decision logic (3 layers):**
-1. Manual flag (IsFrontBgRemove) — highest priority
-2. Background colour matches garment colour from SKU
-3. Automated corner analysis (all 4 corners same dark/light colour)
-
-**SKU colour map:**
+**SKU colour map** (approximate garment RGB, used for the colour-match check):
 ```python
 colour_map = {
     "blk": (20, 20, 20),
@@ -391,17 +492,16 @@ colour_map = {
 
 ---
 
-## 14. QC System
+## 14. QC System — ⚠️ NOT IMPLEMENTED
 
-1. Script generates PNG thumbnail of output
-2. Compares to FrontPreviewImage (Amazon reference)
-3. Confidence score 0-100%
-4. ≥85% → auto-move to print folder
-5. <85% → alert design team
+Same status as section 11 — this is a design doc, not current behavior. No
+thumbnail generation, confidence scoring, or alerting code exists yet.
 
-**Alert contains:** Order ID, reason, thumbnail, link to order page
-**Channels:** Email + Slack webhook
-**DB flags:** QCStatus, QCNotes, IsComplexOrder
+1. *(planned)* Script generates PNG thumbnail of output
+2. *(planned)* Compares to FrontPreviewImage (Amazon reference)
+3. *(planned)* Confidence score 0-100%
+4. *(planned)* ≥85% → auto-move to print folder
+5. *(planned)* <85% → alert design team
 
 ---
 
@@ -427,31 +527,41 @@ python prototype_app.py
 
 ```
 C:\gimpTest\
-├── batch_processor.py       Production automation script
-├── ps_bridge.py             Photoshop UXP job bridge
-├── daemon.log               Runtime log
-├── .env                     Secrets and paths config
-├── Output\                  Finished PSD files (date-organised)
-│   └── 2026-03-20\
-├── Fonts\                   TTF files (names must match DB font names exactly)
-├── template\                PSD template files
+├── batch_processor.py       Production automation script (runs as VarsanyDaemon service)
+├── ps_bridge.py             Photoshop UXP job bridge (writes jobs\, reads done\/error\)
+├── uxp-plugin\index.html    The actual Photoshop UXP plugin — builds every PSD
+├── daemon.log               Runtime log (grows large — has hit 250MB+; consider rotating)
+├── .env                     Secrets and paths config (VARSANY_BASE, VARSANY_FONTS_EXTRA, DB connection, etc.)
+├── Output\                  Finished PSD files, dated by ship-by date (see section 6)
+│   └── <ship-by-date>\
+│       ├── Automated\, DTF Front\, DTF Kids Hoodie\, semicustomized\
+├── Fonts\                   Project-local font files (one of 4 scanned locations — section 9)
+├── template\                PSD template files — now only meaningfully used for the 4 semi-custom jersey templates (section 8); everything else here is orphaned
 ├── Temp\                    Temp files during processing
 │   └── OrderImages\         Customer images (UXP reads from here)
-├── jobs\                    Job JSON files (batch_processor → UXP plugin)
+├── jobs\                    Job JSON files (batch_processor → UXP plugin) — a job sitting here survives a Python daemon restart; UXP works through it independently and asynchronously
 ├── done\                    Done markers (UXP plugin → batch_processor)
 └── error\                   Error markers (UXP plugin → batch_processor)
 ```
+
+**Not in this repo (`.gitignore` excludes them):** `Output\`, `Temp\`,
+`done\`, `error\`, `Fonts\`, `template\`, `.env`, all `.psd`/`.psb`/`.log`
+files. A `git clone` alone will **not** produce a working setup — see the
+migration notes in section 19.
 
 ---
 
 ## 17. Developer Tasks Pending
 
-1. Add 8 new columns to tblCustomOrderDetails (SQL in section 3)
+1. Add 8 new columns to tblCustomOrderDetails (SQL in section 3) — confirmed still not done on local DB
 2. Add "Remove Background: Yes/No" dropdown on order page for each zone
 3. Create automation_user SQL login (SELECT + UPDATE only)
 4. Open firewall port 1433 for automation PC IP
-5. Confirm whether FrontPreviewImage is populated on live database
+5. ~~Confirm whether FrontPreviewImage is populated on live database~~ — **RESOLVED: yes, confirmed populated on real orders checked this session**
 6. Video call with Dhruv to reorganise Synology folder structure
+7. *(new)* Restore the 3 missing semi-custom jersey templates (Kids/Scotland variants — section 8)
+8. *(new)* Investigate the "UXP reported done but output file missing" failure mode — hit at least twice this session on standard multi-item orders, distinct from the (already-fixed) semi-custom timeout issue
+9. *(new)* Implement the UXP performance fixes identified this session (suspendHistory, batched batchPlay calls) if queue growth continues to outpace throughput
 
 ---
 
@@ -470,14 +580,30 @@ C:\gimpTest\
 ## 19. Important Technical Notes
 
 - **72 PPI display issue:** Photoshop shows 72ppi when opening output but
-  pixel dimensions (9600×9600) are correct — this is display metadata only
-- **File naming:** [OrderID]_[zone].psd e.g. 205-6487629-5805162_front.psd
-- **FrontTextJSON:** Currently empty — Amazon does not share drag position
-- **FrontPreviewImage:** May not be populated — confirm with developer
+  pixel dimensions are correct — this is display metadata only
+- **File naming:** `{OrderID}.psd`, or `{OrderID}_{N}items.psd` for multi-item orders
 - **PSB:** Auto-triggered when estimated size >2GB
-- **CMYK:** PIL converts via image.convert("CMYK")
-- **Wrong template:** Was a daily problem for printing team —
-  automation fixes this permanently via TEMPLATE_MAP
+- **The daemon and Photoshop/UXP are decoupled, asynchronous processes.**
+  Restarting the Python daemon does **not** cancel a job UXP is already
+  working on — it keeps rendering in the background at its own pace. A
+  large multi-item job can finish minutes or hours after Python gave up
+  waiting on it and moved on. This caused confusion this session when an
+  already-shipped order's PSD kept getting saved well after the order was
+  supposedly excluded from the queue — the job had been submitted before
+  the exclusion filter existed, and UXP was still grinding through it.
+- **"Skipped" ≠ "processed."** Orders detected as embroidery/rhinestone are
+  logged as skipped every single poll cycle **forever** — skipping never
+  sets `Topaz_Processed`, so they permanently inflate the "pending" count
+  unless someone processes them manually and updates the DB.
+- **Wrong template:** was a daily problem for the printing team under the
+  old manual process — no longer applicable now that standard orders don't
+  use template files at all (section 8).
+- **Server migration:** the font-scanning mechanism itself needs no code
+  changes to move servers (it's `.env`-driven) — but 2 of its 4 source
+  folders (`C:\Windows\Fonts`, the per-user `%LOCALAPPDATA%` folder) are
+  machine-specific and won't come along with a `git clone`. A consolidated,
+  verified-complete copy of all currently-used fonts exists at
+  `C:\Users\VARHeist\Desktop\fonts` for this purpose.
 - **Antigravity:** Uses Google account login only —
   Yedhu@fullymerched.com (Microsoft) won't work — use personal Gmail
 
@@ -485,9 +611,38 @@ C:\gimpTest\
 
 ## 20. Questions Still Open
 
-1. Exact 28 PSD template filenames (ask designer for folder listing)
-2. Is FrontPreviewImage populated on live database?
-3. What layer names are inside the PSD templates?
+1. ~~Exact 28 PSD template filenames~~ — largely moot now; standard orders don't use template files at all (section 8). Still open: recovering the 3 missing semi-custom jersey templates.
+2. ~~Is FrontPreviewImage populated on live database?~~ — **RESOLVED, yes.**
+3. What layer names are inside the semi-custom jersey templates beyond `Player`/`08` (the decorative/crest Smart Object layers aren't uniquely named per slot, which matters if we ever want to programmatically delete unused-slot layers)?
 4. Video call with Dhruv re: Synology folder structure
-5. Font files list in C:\gimpTest\Fonts\ on designer PC
-6. Does printing team prefer all-in-one file or separate per zone for quantity orders?
+5. Font files list — **RESOLVED for this machine**, see section 9; still need the equivalent audit on the designer's own PC if fonts differ there
+6. Does printing team prefer all-in-one file or separate per zone for quantity orders? (Current behavior: all-in-one, stacked vertically)
+7. *(new)* Why do some standard multi-item orders fail with "output file missing" despite UXP reporting done? (section 17, item 8)
+
+---
+
+## 21. Session Changelog (2026-07-16 verification pass)
+
+Fixes actually implemented and verified working in `batch_processor.py` /
+`uxp-plugin/index.html` this session, in case future work builds on
+assumptions from before these existed:
+
+- Standard orders build their canvas dynamically in UXP instead of opening
+  a template file (section 8) — eliminated a whole class of "No template
+  found" failures.
+- Golf towel SKU prefix (`AnyTxtTwl_`) was falling through to the generic
+  `AnyTxt→adulttshirt` catch-all and getting the wrong canvas size — fixed
+  in `SKU_MAP`.
+- Pocket "left + right" 2-image combo now correctly splits into two zones
+  with per-side font/colour resolution (was silently dropping the second
+  image and using the wrong colour for both sides).
+- Semi-custom Photoshop timeout raised from `120s × item count` to
+  `max(600, 150 × item count)` — large jersey templates were genuinely
+  taking longer than the old timeout, causing false "FAILED" results and
+  duplicate output files on retry.
+- Orders already marked `IsShipped=1` are now excluded from the processing
+  queue entirely — this turned out to be the majority of the backlog (614
+  → 45 unique orders in one before/after check).
+- The daemon runs as a Windows Service (`VarsanyDaemon`, NSSM) — this was
+  discovered mid-session (editing `start_daemon.bat` alone doesn't change
+  what the live service runs; its `AppParameters` must be updated directly).
