@@ -422,7 +422,19 @@ section 3). Treat this as a design doc for future work, not current behavior.
 ## 12. Layered PSD Generation (actual mechanism)
 
 **Engine:** Adobe Photoshop, driven via the **UXP plugin API**
-(`uxp-plugin/index.html`), not GIMP.
+(`uxp-plugin/index.js`, loaded by `index.html`), not GIMP.
+
+> ⚠️ **All plugin JS lives in `index.js`, loaded via `<script src="index.js">`
+> — it must NOT be inlined back into `index.html`.** UXP has a documented,
+> version-inconsistent restriction that refuses to execute JS embedded
+> directly in a `<script>` block in the HTML ("Refusing to load inline
+> script tag as executable code. Code generation is disabled in plugins.").
+> This surfaced during migration to a new server running an older Photoshop
+> build (v27.4.0) — the same inline-script setup happened to work on this
+> server's v27.8.0, but was never actually safe. The manifest's
+> `allowCodeGenerationFromStrings` permission does **not** cover this — that
+> only governs inline HTML event-handler attributes (`onclick="..."`), a
+> different restriction entirely.
 
 - Python (`ps_bridge.py`) writes a job JSON to `C:\gimpTest\jobs\{OrderID}.json`
   containing zone data (image paths, text, font, colour, canvas size) and
@@ -529,7 +541,11 @@ python prototype_app.py
 C:\gimpTest\
 ├── batch_processor.py       Production automation script (runs as VarsanyDaemon service)
 ├── ps_bridge.py             Photoshop UXP job bridge (writes jobs\, reads done\/error\)
-├── uxp-plugin\index.html    The actual Photoshop UXP plugin — builds every PSD
+├── uxp-plugin\
+│   ├── index.html           Plugin HTML shell — panel UI only, no logic
+│   ├── index.js             All plugin logic — loaded via <script src="index.js">,
+│   │                        NOT inline in the HTML (see section 12 for why)
+│   └── manifest.json        Plugin manifest (host app, permissions, entrypoints)
 ├── daemon.log               Runtime log (grows large — has hit 250MB+; consider rotating)
 ├── .env                     Secrets and paths config (VARSANY_BASE, VARSANY_FONTS_EXTRA, DB connection, etc.)
 ├── Output\                  Finished PSD files, dated by ship-by date (see section 6)
@@ -646,3 +662,15 @@ assumptions from before these existed:
 - The daemon runs as a Windows Service (`VarsanyDaemon`, NSSM) — this was
   discovered mid-session (editing `start_daemon.bat` alone doesn't change
   what the live service runs; its `AppParameters` must be updated directly).
+- **Migration finding:** `install_fonts.py` was pointing at a dead `A:\font\`
+  drive and a ~20-font hardcoded subset from an earlier server setup —
+  rewritten to install every font from any `--source` folder, matching the
+  full 688-font set actually in use (see section 9).
+- **Migration finding:** all of `uxp-plugin/index.html`'s JS was inline in a
+  `<script>` block. This broke on a new server's older Photoshop build
+  (v27.4.0) with `"Refusing to load inline script tag as executable code"`
+  — a documented, version-inconsistent UXP restriction, unrelated to the
+  `allowCodeGenerationFromStrings` manifest permission. Fixed by extracting
+  all logic into `uxp-plugin/index.js`, loaded via `<script src="index.js">`
+  (section 12) — this is the version-safe pattern and should be used for
+  any future plugin changes, never inline `<script>` content again.
